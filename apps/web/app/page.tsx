@@ -7,10 +7,15 @@ export default function Home() {
   const [status, setStatus] = useState<string>("connecting...");
   const [socketId, setSocketId] = useState<string>("(none)");
   const [log, setLog] = useState<string[]>([]);
+  
+  // New state for inputs
+  const [playerName, setPlayerName] = useState<string>("");
+  const [roomCode, setRoomCode] = useState<string>("");
+  
   const socketRef = useRef<Socket | null>(null);
 
   const addLog = (line: string) => {
-    setLog((prev) => [...prev, `[${new Date().toLocaleTimeString()}] ${line}`]);
+    setLog((prev) => [...prev, `[${new Date().toLocaleTimeString([],{hour12:false})}] ${line}`]);
   };
 
   useEffect(() => {
@@ -27,49 +32,126 @@ export default function Home() {
       setStatus("disconnected");
       addLog("disconnected");
     });
-    socket.on("pong",(counter)=>{
-      addLog(`button pressed: ${JSON.stringify(counter)}`);
+
+    socket.on("pong", (counter) => {
+      addLog(`server response: ${JSON.stringify(counter)}`);
     });
+    socket.on("user_join",(data)=>{
+      addLog(`${data} join the channel`);
+    });
+
     return () => {
       socket.disconnect();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const sendPing = () => {
-    console.log("got in");
+  interface RoomResponse {
+  success: boolean;
+  roomId?: string;
+  error?: string;
+}
+  const handleCreate = () => {
     const socket = socketRef.current;
-    if (!socket) { return };
-    addLog("sending ping...");
-    socket.emit("ping", { msg: "hello", at: Date.now() }, (response: Response) => {
-      addLog(`got response: ${JSON.stringify(response)}`);
-    });
+    if (!socket || !playerName) {
+      addLog("Error: Name is required to create a room.");
+      return;
+    }
+    addLog(`Creating room for ${playerName}...`);
+    
+      socket.emit("create_room", { name: playerName },(res:RoomResponse)=>{
+        if(res.success){
+          setStatus(`Rooms ID: ${res.roomId}`);
+        }
+      });
+  };
+
+  const handleJoin = () => {
+    const socket = socketRef.current;
+    if (!socket || !playerName || !roomCode) {
+      addLog("Error: Name and Room Code are required to join.");
+      return;
+    }
+    addLog(`${playerName} attempting to join room: ${roomCode}...`);
+    // Emit your join event here
+     socket.emit("join_room", { name: playerName, code: roomCode },(res:RoomResponse)=>{
+      if(res.success){
+         setStatus(`Rooms ID: ${res.roomId}`);
+      }
+     });
   };
 
   return (
-    <main className="min-h-screen p-8 font-mono">
-      <h1 className="text-2xl font-bold mb-4">Skribbl WebSocket Test</h1>
+    <main className="min-h-screen p-8 font-mono bg-[#282828] text-[#ebdbb2]">
+      <div className="max-w-2xl mx-auto space-y-6">
+        <h1 className="text-3xl font-bold text-[#b8bb26] mb-4">Skribbl Lobby</h1>
 
-      <div className="mb-4 space-y-1">
-        <div>Status: <span className="font-bold">{status}</span></div>
-        <div>Socket ID: <span className="font-bold">{socketId}</span></div>
-      </div>
+        {/* Connection Status */}
+        <div className="flex justify-between items-center bg-[#3c3836] p-3 rounded border border-[#504945]">
+          <div>
+            <span className="text-[#a89984]">Status:</span>{" "}
+            <span className={`font-bold ${status === 'disconnected' ? 'text-[#fb4934]' : 'text-[#b8bb26]'}`}>
+              {status}
+            </span>
+          </div>
+          <div className="text-sm">
+            <span className="text-[#a89984]">ID:</span> <span className="text-[#83a598]">{socketId}</span>
+          </div>
+        </div>
 
-      <button
-        onClick={sendPing}
-        className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
-      >
-        Send Ping
-      </button>
+        {/* Controls */}
+        <div className="bg-[#3c3836] p-6 rounded border border-[#504945] space-y-4">
+          <div className="space-y-2">
+            <label className="block text-sm text-[#a89984]">Player Name</label>
+            <input
+              type="text"
+              value={playerName}
+              onChange={(e) => setPlayerName(e.target.value)}
+              placeholder="Enter your name"
+              className="w-full bg-[#1d2021] border border-[#504945] p-2 rounded text-[#ebdbb2] focus:outline-none focus:border-[#83a598] transition-colors"
+            />
+          </div>
 
-      <div className="mt-6">
-        <h2 className="text-lg font-bold mb-2">Log:</h2>
-        <div className="bg-gray-800 p-3 rounded text-sm space-y-1 max-h-96 overflow-y-auto">
-          {log.length === 0 ? (
-            <div className="text-gray-500">no events yet</div>
-          ) : (
-            log.map((line, i) => <div key={i}>{line}</div>)
-          )}
+          <div className="space-y-2">
+            <label className="block text-sm text-[#a89984]">Room Code (for joining)</label>
+            <input
+              type="text"
+              value={roomCode}
+              onChange={(e) => setRoomCode(e.target.value)}
+              placeholder="e.g. ABCD"
+              className="w-full bg-[#1d2021] border border-[#504945] p-2 rounded text-[#ebdbb2] focus:outline-none focus:border-[#83a598] transition-colors uppercase"
+            />
+          </div>
+
+          <div className="flex gap-4 pt-2">
+            <button
+              onClick={handleCreate}
+              className="flex-1 bg-[#98971a] hover:bg-[#b8bb26] text-[#282828] font-bold py-2 px-4 rounded transition-colors"
+            >
+              Create Room
+            </button>
+            <button
+              onClick={handleJoin}
+              className="flex-1 bg-[#458588] hover:bg-[#83a598] text-[#282828] font-bold py-2 px-4 rounded transition-colors"
+            >
+              Join Room
+            </button>
+          </div>
+        </div>
+
+        {/* Logs */}
+        <div className="mt-6">
+          <h2 className="text-lg font-bold mb-2 text-[#d3869b]">Logs</h2>
+          <div className="bg-[#1d2021] border border-[#504945] p-3 rounded text-sm space-y-1 h-48 overflow-y-auto">
+            {log.length === 0 ? (
+              <div className="text-[#7c6f64] italic">Waiting for events...</div>
+            ) : (
+              log.map((line, i) => (
+                <div key={i} className="text-[#a89984] font-mono whitespace-pre-wrap">
+                  {line}
+                </div>
+              ))
+            )}
+          </div>
         </div>
       </div>
     </main>
