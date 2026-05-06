@@ -1,5 +1,10 @@
 import Fastify from "fastify";
 import { Server } from "socket.io";
+import { RoomStore } from "./roomStore.js"
+import { redis } from "./redis.js";
+import { RoomState, RoomResponse, Player } from "../../../packages/shared/index.js";
+
+const roomStore = new RoomStore(redis);
 const app = Fastify({ logger: true });
 app.get("/health", async () => ({ ok: true }));
 const start = async () => {
@@ -7,50 +12,83 @@ const start = async () => {
     const io = new Server(app.server, {
         cors: { origin: "http://localhost:3000" },
     });
-    var counter = 0;
+
     io.on("connection", (socket) => {
         console.log("connected");
-        socket.on('create_room', (data, callback) => {
-            const roomId = Math.random().toString(36).substring(2, 8).toUpperCase();
-            socket.join(roomId);
-            console.log(`created room: ${data.name}`);
-            counter++;
-            callback({
-                success: true,
-                roomId: roomId,
-                error: false
-            });
+        socket.on('create_room', async (data, callback) => {
+            const hostPlayer: Player = {
+                id: data.id,
+                socketId: socket.id,
+                name: data.name,
+                score: 0,
+                isHost: true
+            }
+            try {
+                const roomId = generateRoomCode();
+
+                const newRoom: RoomState = {
+                    roomId: roomId,
+                    players: [hostPlayer],
+                    status: "waiting"
+                };
+
+                // Use the lowercase 'roomStore' instance!
+                await roomStore.saveRoom(newRoom);
+
+                socket.join(roomId);
+                console.log(`🟢 Room ${roomId} created by ${hostPlayer.name}`);
+
+                callback({ success: true, roomId: roomId });
+
+            } catch (error) {
+                console.error("Failed to create room:", error);
+                callback({ success: false, error: true });
+            }
         });
-socket.on('join_room', (data, callback) => {
-    const roomCode = data.code.toString();
-    const roomExists = io.sockets.adapter.rooms.has(roomCode);
-    
-    if (roomExists) {
-        // 1. Check if the user is ALREADY in the room
-        if (!socket.rooms.has(roomCode)) {
-            // 2. If they are not, join them and broadcast to others
-            socket.join(roomCode);
-            io.to(roomCode).emit("user_join", data.name);
-            counter++; 
-        } else {
-            console.log(`${data.name} tried to join but is already in the room.`);
-        }
-        
-        // 3. Always fire the callback so the frontend UI updates to "Rooms ID: ..."
-        callback({
-            success: true,
-            roomId: roomCode,
-            error: false
+        socket.on('join_room', async (data, callback) => {
+            const roomId = data.code;
+            const newPlayer: Player = {
+                id: data.id,
+                socketId: socket.id,
+                name: data.name,
+                score: 0,
+                isHost: false
+            };
+
+            try {
+                const room = await roomStore.joinOrUpdatePlayer(roomId, newPlayer);
+
+                if (room != null) {
+                    // 1. Add the socket to the communication channel
+                    socket.join(roomId);
+                    console.log(`user: ${newPlayer.name} joined id: ${newPlayer.id}`);
+                    io.to(roomId).emit("user_join", newPlayer.name);
+                    callback({ success: true, roomId: roomId });
+                }
+                else {
+                    callback({
+                        success: false,
+                        error: "Room not found. Check the code and try again."
+                    });
+                }
+            }
+            catch (error) {
+                console.error(`Failed to join room ${roomId}:`, error);
+                callback({
+                    success: false,
+                    error: "Server error while joining. Please try again."
+                });
+            }
         });
-    } else {
-        // Room doesn't exist
-        callback({
-            success: false,
-            roomId: roomCode,
-            error: true
-        });
-    }
-});
     });
 };
 start();
+function generateRoomCode(): string {
+    // Alphabet without 0, O, 1, I, L
+    const chars = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+    let result = "";
+    for (let i = 0; i < 6; i++) {
+        result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return result;
+}

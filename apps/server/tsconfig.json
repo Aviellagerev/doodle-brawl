@@ -15,8 +15,11 @@
     "strict": true,
 
     "outDir": "dist",
-    "rootDir": "src",
+    "rootDir": "../..", // 👈 ADD THIS LINE
     "sourceMap": true
   },
-  "include": ["src/**/*"]
+  "include": [
+    "src/**/*",
+    "../../packages/shared/**/*"
+  ]
 }
