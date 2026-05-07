@@ -2,22 +2,31 @@
 
 import { useEffect, useState, useRef } from "react";
 import { io, Socket } from "socket.io-client";
-
+import { v4 as uuidv4 } from 'uuid';
+import { RoomResponse, Player } from "../../../packages/shared";
 export default function Home() {
   const [status, setStatus] = useState<string>("connecting...");
   const [socketId, setSocketId] = useState<string>("(none)");
   const [log, setLog] = useState<string[]>([]);
-  
-  // New state for inputs
+
+
   const [playerName, setPlayerName] = useState<string>("");
   const [roomCode, setRoomCode] = useState<string>("");
-  
+
   const socketRef = useRef<Socket | null>(null);
 
   const addLog = (line: string) => {
-    setLog((prev) => [...prev, `[${new Date().toLocaleTimeString([],{hour12:false})}] ${line}`]);
+    setLog((prev) => [...prev, `[${new Date().toLocaleTimeString([], { hour12: false })}] ${line}`]);
   };
 
+  function getPermanentPlayerId() {
+    let playerId = localStorage.getItem("skribbl_player_id");
+    if (!playerId) {
+      playerId = uuidv4(); 
+      localStorage.setItem("skribbl_player_id", playerId);
+    }
+    return playerId;
+  }
   useEffect(() => {
     const socket = io("http://localhost:3001");
     socketRef.current = socket;
@@ -36,20 +45,16 @@ export default function Home() {
     socket.on("pong", (counter) => {
       addLog(`server response: ${JSON.stringify(counter)}`);
     });
-    socket.on("user_join",(data)=>{
+    socket.on("user_join", (data) => {
       addLog(`${data} join the channel`);
     });
 
     return () => {
       socket.disconnect();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  
   }, []);
-  interface RoomResponse {
-  success: boolean;
-  roomId?: string;
-  error?: string;
-}
+
   const handleCreate = () => {
     const socket = socketRef.current;
     if (!socket || !playerName) {
@@ -57,12 +62,12 @@ export default function Home() {
       return;
     }
     addLog(`Creating room for ${playerName}...`);
-    
-      socket.emit("create_room", { name: playerName },(res:RoomResponse)=>{
-        if(res.success){
-          setStatus(`Rooms ID: ${res.roomId}`);
-        }
-      });
+
+    socket.emit("create_room", { id:getPermanentPlayerId(),name: playerName }, (res: RoomResponse) => {
+      if (res.success) {
+        setStatus(`Rooms ID: ${res.roomId}`);
+      }
+    });
   };
 
   const handleJoin = () => {
@@ -72,12 +77,12 @@ export default function Home() {
       return;
     }
     addLog(`${playerName} attempting to join room: ${roomCode}...`);
-    // Emit your join event here
-     socket.emit("join_room", { name: playerName, code: roomCode },(res:RoomResponse)=>{
-      if(res.success){
-         setStatus(`Rooms ID: ${res.roomId}`);
+
+    socket.emit("join_room", {id:getPermanentPlayerId(), name: playerName, code: roomCode }, (res: RoomResponse) => {
+      if (res.success) {
+        setStatus(`Rooms ID: ${res.roomId}`);
       }
-     });
+    });
   };
 
   return (

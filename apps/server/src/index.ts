@@ -32,11 +32,11 @@ const start = async () => {
                     status: "waiting"
                 };
 
-                // Use the lowercase 'roomStore' instance!
+            
                 await roomStore.saveRoom(newRoom);
 
                 socket.join(roomId);
-                console.log(`🟢 Room ${roomId} created by ${hostPlayer.name}`);
+                console.log(`Room ${roomId} created by ${hostPlayer.name}`);
 
                 callback({ success: true, roomId: roomId });
 
@@ -59,7 +59,7 @@ const start = async () => {
                 const room = await roomStore.joinOrUpdatePlayer(roomId, newPlayer);
 
                 if (room != null) {
-                    // 1. Add the socket to the communication channel
+
                     socket.join(roomId);
                     console.log(`user: ${newPlayer.name} joined id: ${newPlayer.id}`);
                     io.to(roomId).emit("user_join", newPlayer.name);
@@ -84,7 +84,7 @@ const start = async () => {
 };
 start();
 function generateRoomCode(): string {
-    // Alphabet without 0, O, 1, I, L
+  
     const chars = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
     let result = "";
     for (let i = 0; i < 6; i++) {
