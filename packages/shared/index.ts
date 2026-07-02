@@ -16,5 +16,6 @@ export interface RoomState {
 export interface RoomResponse {
   success: boolean;
   roomId?: string;
-  error?: boolean;
+  room?:RoomState;
+  error?: boolean | string;
 }

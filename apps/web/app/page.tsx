@@ -3,16 +3,14 @@
 import { useEffect, useState, useRef } from "react";
 import { io, Socket } from "socket.io-client";
 import { v4 as uuidv4 } from 'uuid';
-import { RoomResponse, Player } from "../../../packages/shared";
+import { RoomResponse, RoomState } from "../../../packages/shared";
+import JoinScreen from "./components/JoinScreen";
+import Lobby from "./components/Lobby";
 export default function Home() {
   const [status, setStatus] = useState<string>("connecting...");
   const [socketId, setSocketId] = useState<string>("(none)");
   const [log, setLog] = useState<string[]>([]);
-
-
-  const [playerName, setPlayerName] = useState<string>("");
-  const [roomCode, setRoomCode] = useState<string>("");
-
+  const [roomState, setRoomState] = useState<RoomState | null>(null)
   const socketRef = useRef<Socket | null>(null);
 
   const addLog = (line: string) => {
@@ -22,13 +20,13 @@ export default function Home() {
   function getPermanentPlayerId() {
     let playerId = localStorage.getItem("skribbl_player_id");
     if (!playerId) {
-      playerId = uuidv4(); 
+      playerId = uuidv4();
       localStorage.setItem("skribbl_player_id", playerId);
     }
     return playerId;
   }
   useEffect(() => {
-    const socket = io("http://localhost:3001");
+    const socket = io(process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:3001");
     socketRef.current = socket;
 
     socket.on("connect", () => {
@@ -45,45 +43,69 @@ export default function Home() {
     socket.on("pong", (counter) => {
       addLog(`server response: ${JSON.stringify(counter)}`);
     });
-    socket.on("user_join", (data) => {
-      addLog(`${data} join the channel`);
-    });
+    socket.on("room_update", (room: RoomState) => setRoomState(room));
+    socket.on("system_message", (msg: string) => addLog(msg));
+
 
     return () => {
       socket.disconnect();
     };
-  
+
   }, []);
 
-  const handleCreate = () => {
+  const handleCreate = (name: string) => {
     const socket = socketRef.current;
-    if (!socket || !playerName) {
+    if (!socket || !name) {
       addLog("Error: Name is required to create a room.");
       return;
     }
-    addLog(`Creating room for ${playerName}...`);
+    addLog(`Creating room for ${name}...`);
 
-    socket.emit("create_room", { id:getPermanentPlayerId(),name: playerName }, (res: RoomResponse) => {
+    socket.emit("create_room", { id: getPermanentPlayerId(), name }, (res: RoomResponse) => {
       if (res.success) {
+        setRoomState(res.room ?? null)
         setStatus(`Rooms ID: ${res.roomId}`);
       }
     });
   };
 
-  const handleJoin = () => {
+  const handleJoin = (name: string, code: string) => {
     const socket = socketRef.current;
-    if (!socket || !playerName || !roomCode) {
+    if (!socket || !name || !code) {
       addLog("Error: Name and Room Code are required to join.");
       return;
     }
-    addLog(`${playerName} attempting to join room: ${roomCode}...`);
+    addLog(`${name} attempting to join room: ${code}...`);
 
-    socket.emit("join_room", {id:getPermanentPlayerId(), name: playerName, code: roomCode }, (res: RoomResponse) => {
+    socket.emit("join_room", { id: getPermanentPlayerId(), name, code }, (res: RoomResponse) => {
       if (res.success) {
+        setRoomState(res.room ?? null)
         setStatus(`Rooms ID: ${res.roomId}`);
       }
     });
   };
+  const handleLeave = () => {
+    const socket = socketRef.current;
+    if (!socket || !roomState) return;               // guard: need socket + a room
+    socket.emit("leave_room",
+      { id: getPermanentPlayerId(), roomId: roomState.roomId },
+      () => setRoomState(null)                        // ← back to JoinScreen
+    );
+  };
+
+  function renderScreen() {
+    // level 1: not in a room yet
+    if (roomState === null) {
+      return <JoinScreen onCreate={handleCreate} onJoin={handleJoin} />;
+    }
+
+    // level 2: in a room — pick the screen for the current phase
+    switch (roomState.status) {
+      case "waiting":
+        return <Lobby room={roomState} onLeave={handleLeave} />;
+    }
+  }
+
 
   return (
     <main className="min-h-screen p-8 font-mono bg-[#282828] text-[#ebdbb2]">
@@ -104,44 +126,7 @@ export default function Home() {
         </div>
 
         {/* Controls */}
-        <div className="bg-[#3c3836] p-6 rounded border border-[#504945] space-y-4">
-          <div className="space-y-2">
-            <label className="block text-sm text-[#a89984]">Player Name</label>
-            <input
-              type="text"
-              value={playerName}
-              onChange={(e) => setPlayerName(e.target.value)}
-              placeholder="Enter your name"
-              className="w-full bg-[#1d2021] border border-[#504945] p-2 rounded text-[#ebdbb2] focus:outline-none focus:border-[#83a598] transition-colors"
-            />
-          </div>
-
-          <div className="space-y-2">
-            <label className="block text-sm text-[#a89984]">Room Code (for joining)</label>
-            <input
-              type="text"
-              value={roomCode}
-              onChange={(e) => setRoomCode(e.target.value)}
-              placeholder="e.g. ABCD"
-              className="w-full bg-[#1d2021] border border-[#504945] p-2 rounded text-[#ebdbb2] focus:outline-none focus:border-[#83a598] transition-colors uppercase"
-            />
-          </div>
-
-          <div className="flex gap-4 pt-2">
-            <button
-              onClick={handleCreate}
-              className="flex-1 bg-[#98971a] hover:bg-[#b8bb26] text-[#282828] font-bold py-2 px-4 rounded transition-colors"
-            >
-              Create Room
-            </button>
-            <button
-              onClick={handleJoin}
-              className="flex-1 bg-[#458588] hover:bg-[#83a598] text-[#282828] font-bold py-2 px-4 rounded transition-colors"
-            >
-              Join Room
-            </button>
-          </div>
-        </div>
+        {renderScreen()}
 
         {/* Logs */}
         <div className="mt-6">
