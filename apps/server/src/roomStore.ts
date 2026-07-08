@@ -1,6 +1,6 @@
 
 import { Redis } from "ioredis";
-import { RoomState, Player } from "../../../packages/shared/index.js";
+import { RoomState, Player ,GameState} from "../../../packages/shared/index.js";
 
 export class RoomStore {
   constructor(private redis: Redis) { }
@@ -33,21 +33,41 @@ export class RoomStore {
     return room;
   }
 
-  async leavePlayer(roomId: string, deletePlayer: string): Promise<RoomState | null> {
+  // Returns the remaining room (or null if it was deleted/not found) AND the
+  // player that was removed (or null if they weren't in the room), so callers
+  // can announce who left.
+  async leavePlayer(roomId: string, playerId: string): Promise<{ room: RoomState | null; removed: Player | null }> {
     const room = await this.getRoom(roomId);
-    if (!room) return null;
-    room.players = room.players.filter((p) => p.id !== deletePlayer);
+    if (!room) return { room: null, removed: null };
+
+    const removed = room.players.find((p) => p.id === playerId) ?? null;
+    room.players = room.players.filter((p) => p.id !== playerId);
+
     if (room.players.length === 0) {
       await this.deleteRoom(roomId);
-      return null;
+      return { room: null, removed };
     }
     if (!room.players.some((p) => p.isHost)) {
       room.players[0].isHost = true;
-    } await this.saveRoom(room);  
-    return room;
+    }
+    await this.saveRoom(room);
+    return { room, removed };
   }
 
   async deleteRoom(roomId: string): Promise<void> {
     await this.redis.del(`room:${roomId}`);
   }
-}
+  async getHost(roomId: string): Promise<string | null> {
+    const room = await this.getRoom(roomId);
+    if(!room) return null;
+    const host = room.players.find(p => p.isHost);
+    return host ? host.socketId : null;
+  }
+  async startGame(roomId: string,gameStart:GameState): Promise<void|null> {
+    const room = await this.getRoom(roomId);
+    if (!room) return null;
+    room.status = "playing"; 
+    room.game = gameStart;
+    this.saveRoom(room);
+  }
+} 

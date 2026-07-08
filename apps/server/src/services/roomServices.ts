@@ -1,4 +1,4 @@
-import { RoomState, Player } from "../../../../packages/shared/index.js";
+import { RoomState, Player,GameState} from "../../../../packages/shared/index.js";
 
 
 export function generateRoomCode(): string {
@@ -23,4 +23,14 @@ export function createNewRoom(host:Player):RoomState {
         players:[host],
         status:"waiting",
      };
+}
+
+export function createNewGameState(startId: string):GameState{
+  return {
+    currentDrawerId:startId,
+    round:0,
+    phase:"choosing",
+    wordLength:null,
+    word:null,
+  };
 }

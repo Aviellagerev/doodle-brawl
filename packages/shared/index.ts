@@ -11,6 +11,7 @@ export interface RoomState {
   roomId: string;
   players: Player[];
   status: "waiting" | "playing" | "finished";
+  game?:GameState;
 }
 
 export interface RoomResponse {
@@ -18,4 +19,11 @@ export interface RoomResponse {
   roomId?: string;
   room?:RoomState;
   error?: boolean | string;
+}
+export interface GameState {
+  currentDrawerId: string;              
+  round: number;                        
+  phase: "choosing" | "drawing";       
+  wordLength: number | null;            
+  word: string | null;                  
 }

@@ -46,6 +46,9 @@ export default function Home() {
     socket.on("room_update", (room: RoomState) => setRoomState(room));
     socket.on("system_message", (msg: string) => addLog(msg));
 
+    socket.on("word_pick",(words:string[])=>{
+      console.log("only the starting player sees this words",words);
+    })
 
     return () => {
       socket.disconnect();
@@ -93,6 +96,14 @@ export default function Home() {
     );
   };
 
+  const handleStart = () =>{
+       const socket = socketRef.current;
+       if (!socket || !roomState) return; 
+       socket.emit("start_game",roomState.roomId);
+       
+
+  };
+
   function renderScreen() {
     // level 1: not in a room yet
     if (roomState === null) {
@@ -102,7 +113,7 @@ export default function Home() {
     // level 2: in a room — pick the screen for the current phase
     switch (roomState.status) {
       case "waiting":
-        return <Lobby room={roomState} onLeave={handleLeave} />;
+        return <Lobby room={roomState} onLeave={handleLeave} onStart={handleStart}/>;
     }
   }
 
