@@ -57,17 +57,21 @@ export class RoomStore {
   async deleteRoom(roomId: string): Promise<void> {
     await this.redis.del(`room:${roomId}`);
   }
-  async getHost(roomId: string): Promise<string | null> {
+  async getHost(roomId: string): Promise<Player | null> {
     const room = await this.getRoom(roomId);
     if(!room) return null;
     const host = room.players.find(p => p.isHost);
-    return host ? host.socketId : null;
+    return host ?? null ;
   }
-  async startGame(roomId: string,gameStart:GameState): Promise<void|null> {
+  // Flips the room into "playing" with the given initial game state, and
+  // returns the updated room so the caller can emit it directly (no second
+  // read). Returns null if the room no longer exists.
+  async startGame(roomId: string, game: GameState): Promise<RoomState | null> {
     const room = await this.getRoom(roomId);
     if (!room) return null;
-    room.status = "playing"; 
-    room.game = gameStart;
-    this.saveRoom(room);
+    room.status = "playing";
+    room.game = game;
+    await this.saveRoom(room);
+    return room;
   }
 } 

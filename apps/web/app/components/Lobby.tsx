@@ -1,4 +1,5 @@
 import { RoomState } from "../../../../packages/shared";
+import PlayerList from "./game/PlayerList";
 
 type LobbyProps = {
     room: RoomState;
@@ -11,14 +12,9 @@ export default function Lobby({ room,onLeave,onStart }: LobbyProps) {
         <div>
             <header>the lobby code {room.roomId}</header>
 
-           { /*plays in lobby*/ } 
-            <ul>
-                {room.players.map((p) => (
-                    <li key={p.id}>
-                        {p.name}{p.isHost ? " 👑" : ""}
-                    </li>
-                ))}
-            </ul>
+           { /*plays in lobby*/ }
+            <PlayerList players={room.players} />
+
             <ul>
                 <li>
             <button onClick={()=>onLeave()}>Leave</button> 

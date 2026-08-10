@@ -1,8 +1,8 @@
 import { Server, Socket } from "socket.io";
 import { RoomStore } from "../roomStore";
-import { RoomState, Player, GameState } from "../../../../packages/shared/index.js";
-import { createNewRoom, createNewPlayer,createNewGameState } from "./../services/roomServices.js";
-import {pickWords} from './gameHandlers.js'
+import { RoomState, Player } from "../../../../packages/shared/index.js";
+import { createNewRoom, createNewPlayer } from "./../services/roomServices.js";
+import { createInitialGame, pickWords } from "../game/skribbl.js";
 export function registerRoomHandlers(io: Server, socket: Socket, roomStore: RoomStore) {
     socket.on("create_room", async (data, callback) => {
         const hostPlayer: Player = createNewPlayer({
@@ -107,21 +107,27 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
         if(!roomId) return;
        
         try{
-            const getHost  = await roomStore.getHost(roomId);
-            if(!getHost) return{error:"no host!"};
-            const gameStart : GameState  = createNewGameState(getHost);
-            //new game state creating 
-            //no we send to the host word choosing 
-            //we know 3 words
-            const words : string[] = pickWords();
-            console.log(`send ${words}`);
-            io.to(getHost).emit("word_pick",words);
-            //after updateidn in the startGame function we emit to the host the 3 words;
-            //to choose then we start the loop 
-            
+            const host = await roomStore.getHost(roomId);
+            if (!host) return;
+
+            // 1. game logic (pure): build the initial round for this mode.
+            const game = createInitialGame(host.id);
+
+            // 2. store (persist): flip status → playing, attach the game,
+            //    and hand the updated room back so we can broadcast it.
+            const room = await roomStore.startGame(roomId, game);
+            if (!room) return;
+
+            // 3. transport (emit): tell EVERYONE the game started first, so all
+            //    clients switch to the game screen...
+            io.to(roomId).emit("room_update", room);
+
+            // ...then privately offer only the drawer three words to choose from.
+            const words = pickWords();
+            io.to(host.socketId).emit("word_pick", words);
         }
         catch(error){
-             console.error(`somthing went bad with start at this id ${roomId}`,error);
+             console.error(`start_game failed for room ${roomId}:`, error);
         }
     
     });

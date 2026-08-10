@@ -6,12 +6,15 @@ import { v4 as uuidv4 } from 'uuid';
 import { RoomResponse, RoomState } from "../../../packages/shared";
 import JoinScreen from "./components/JoinScreen";
 import Lobby from "./components/Lobby";
+import GameScreen from "./components/game/GameScreen";
 export default function Home() {
   const [status, setStatus] = useState<string>("connecting...");
   const [socketId, setSocketId] = useState<string>("(none)");
   const [log, setLog] = useState<string[]>([]);
   const [roomState, setRoomState] = useState<RoomState | null>(null)
   const socketRef = useRef<Socket | null>(null);
+  const [playerId, setPlayerId] = useState("");
+  const [words, setWords] = useState<string[]>([]);   // 3 choices the drawer got
 
   const addLog = (line: string) => {
     setLog((prev) => [...prev, `[${new Date().toLocaleTimeString([], { hour12: false })}] ${line}`]);
@@ -28,7 +31,7 @@ export default function Home() {
   useEffect(() => {
     const socket = io(process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:3001");
     socketRef.current = socket;
-
+    setPlayerId(getPermanentPlayerId());
     socket.on("connect", () => {
       setStatus("connected");
       setSocketId(socket.id ?? "(unknown)");
@@ -46,16 +49,23 @@ export default function Home() {
     socket.on("room_update", (room: RoomState) => setRoomState(room));
     socket.on("system_message", (msg: string) => addLog(msg));
 
-    socket.on("word_pick",(words:string[])=>{
-      console.log("only the starting player sees this words",words);
-    })
+    socket.on("word_pick", (w: string[]) => {
+     
+      setWords(w);
+    });
 
     return () => {
       socket.disconnect();
     };
 
   }, []);
+  const handleChooseWord = (word:string) => {
+    const socket = socketRef.current;
+    if (!socket || !roomState) return;
+    socket.emit("choose_word", {word});
+    setWords([]);
 
+  };
   const handleCreate = (name: string) => {
     const socket = socketRef.current;
     if (!socket || !name) {
@@ -96,11 +106,11 @@ export default function Home() {
     );
   };
 
-  const handleStart = () =>{
-       const socket = socketRef.current;
-       if (!socket || !roomState) return; 
-       socket.emit("start_game",roomState.roomId);
-       
+  const handleStart = () => {
+    const socket = socketRef.current;
+    if (!socket || !roomState) return;
+    socket.emit("start_game", roomState.roomId);
+
 
   };
 
@@ -113,7 +123,10 @@ export default function Home() {
     // level 2: in a room — pick the screen for the current phase
     switch (roomState.status) {
       case "waiting":
-        return <Lobby room={roomState} onLeave={handleLeave} onStart={handleStart}/>;
+        return <Lobby room={roomState} onLeave={handleLeave} onStart={handleStart} />;
+      //here should be start of the game render
+      case "playing":
+        return <GameScreen room={roomState} myPlayerId={playerId}  words={words} onChooseWord = {handleChooseWord}/>
     }
   }
 
