@@ -33,9 +33,7 @@ export class RoomStore {
     return room;
   }
 
-  // Returns the remaining room (or null if it was deleted/not found) AND the
-  // player that was removed (or null if they weren't in the room), so callers
-  // can announce who left.
+
   async leavePlayer(roomId: string, playerId: string): Promise<{ room: RoomState | null; removed: Player | null }> {
     const room = await this.getRoom(roomId);
     if (!room) return { room: null, removed: null };
@@ -63,9 +61,6 @@ export class RoomStore {
     const host = room.players.find(p => p.isHost);
     return host ?? null ;
   }
-  // Flips the room into "playing" with the given initial game state, and
-  // returns the updated room so the caller can emit it directly (no second
-  // read). Returns null if the room no longer exists.
   async startGame(roomId: string, game: GameState): Promise<RoomState | null> {
     const room = await this.getRoom(roomId);
     if (!room) return null;

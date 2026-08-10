@@ -2,6 +2,7 @@ import { RoomState } from "../../../../../packages/shared";
 import WordBar from "./WordBar";
 import PlayerList from "./PlayerList";
 import WordPicker from "./WordPicker";
+import DrawingBoard from "./DrawingBoard";
 type Props = {
      room: RoomState;
       myPlayerId: string; 
@@ -33,6 +34,7 @@ export default function GameScreen({ room, myPlayerId, words, onChooseWord }: Pr
                     <PlayerList players={room.players} currentDrawerId={game.currentDrawerId} />
                 </div>
                 {/* DrawingBoard goes here (Milestone 2) */}
+                <DrawingBoard isDrawer={isDrawer} /> 
                 {isDrawer && game.phase === "choosing" && words.length > 0 ? (
                     <div className="flex-1 flex items-center justify-center bg-[#1d2021] border border-[#504945] rounded min-h-[300px]">
                         <WordPicker words={words} onChoose={onChooseWord} />

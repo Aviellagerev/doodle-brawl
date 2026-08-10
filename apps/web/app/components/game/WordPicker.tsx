@@ -1,7 +1,4 @@
-// Drawer-only. Shows the 3 candidate words as buttons; clicking one bubbles
-// the choice up via onChoose. Dumb: no socket, no state — the 3 words come
-// down as props (held in page.tsx from the `word_pick` event), and the emit
-// happens up in page.tsx.
+
 type Props = { words: string[]; onChoose: (word: string) => void };
 
 export default function WordPicker({ words, onChoose }: Props) {

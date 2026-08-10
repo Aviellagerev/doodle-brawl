@@ -50,7 +50,6 @@ export default function Home() {
     socket.on("system_message", (msg: string) => addLog(msg));
 
     socket.on("word_pick", (w: string[]) => {
-     
       setWords(w);
     });
 

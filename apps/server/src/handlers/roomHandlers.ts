@@ -2,7 +2,7 @@ import { Server, Socket } from "socket.io";
 import { RoomStore } from "../roomStore";
 import { RoomState, Player } from "../../../../packages/shared/index.js";
 import { createNewRoom, createNewPlayer } from "./../services/roomServices.js";
-import { createInitialGame, pickWords } from "../game/skribbl.js";
+import { chooseWord, createInitialGame, pickWords, publicRoom } from "../game/skribbl.js";
 export function registerRoomHandlers(io: Server, socket: Socket, roomStore: RoomStore) {
     socket.on("create_room", async (data, callback) => {
         const hostPlayer: Player = createNewPlayer({
@@ -20,7 +20,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
             socket.join(newRoom.roomId);
             socket.data.roomId = newRoom.roomId;
             socket.data.playerId = hostPlayer.id;
-            io.to(newRoom.roomId).emit("room_update", newRoom);
+            io.to(newRoom.roomId).emit("room_update", publicRoom(newRoom));
             console.log(`Room ${newRoom.roomId} created by ${hostPlayer.name}`);
 
             callback({ success: true, roomId: newRoom.roomId, room: newRoom });
@@ -50,7 +50,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
                 socket.data.roomId = room.roomId;
                 socket.data.playerId = newPlayer.id;
                 console.log(`user: ${newPlayer.name} joined id: ${newPlayer.id}`);
-                io.to(roomId).emit("room_update", room);
+                io.to(roomId).emit("room_update", publicRoom(room));
                 io.to(roomId).emit("system_message", `${newPlayer.name} joined the room`);
                 callback({ success: true, roomId: roomId, room });
             }
@@ -75,7 +75,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
             const { room, removed } = await roomStore.leavePlayer(data.roomId, data.id);
             socket.leave(data.roomId);
             if (room) {
-                io.to(room.roomId).emit("room_update", room);
+                io.to(room.roomId).emit("room_update", publicRoom(room));
                 io.to(room.roomId).emit("system_message", `${removed?.name ?? "A player"} left the room`);
             }
             callback({ success: true });
@@ -92,7 +92,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
         try {
             const { room, removed } = await roomStore.leavePlayer(roomId, playerId);
             if (room) {
-                io.to(roomId).emit("room_update", room);
+                io.to(roomId).emit("room_update", publicRoom(room));
                 io.to(roomId).emit("system_message", `${removed?.name ?? "A player"} left the room`);
             }
         } catch (error) {
@@ -101,12 +101,12 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
 
     });
 
-        //button start presesd 
-    socket.on('start_game', async () =>{
+    //button start presesd 
+    socket.on('start_game', async () => {
         const roomId = socket.data.roomId;
-        if(!roomId) return;
-       
-        try{
+        if (!roomId) return;
+
+        try {
             const host = await roomStore.getHost(roomId);
             if (!host) return;
 
@@ -120,16 +120,40 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
 
             // 3. transport (emit): tell EVERYONE the game started first, so all
             //    clients switch to the game screen...
-            io.to(roomId).emit("room_update", room);
+            io.to(roomId).emit("room_update", publicRoom(room));
 
             // ...then privately offer only the drawer three words to choose from.
             const words = pickWords();
             io.to(host.socketId).emit("word_pick", words);
         }
-        catch(error){
-             console.error(`start_game failed for room ${roomId}:`, error);
+        catch (error) {
+            console.error(`start_game failed for room ${roomId}:`, error);
         }
-    
+
     });
+
+    socket.on("choose_word", async (data) => {
+        const roomId = socket.data.roomId;
+        if (!roomId) return;
+        try {
+            const room = await roomStore.getRoom(roomId);
+            if (!room || !room.game) return;
+            //room exsists + we got it ;
+            if (socket.data.playerId !== room.game.currentDrawerId) return; //not the drawer
+            if (room.game.phase !== "choosing") return; //wrong phase
+            const word = data.word;//validate
+            if (typeof word !== "string" || word.length === 0) return; //wrong input?
+            const nextGame = chooseWord(room.game, word);
+            room.game = nextGame;
+            await roomStore.saveRoom(room);
+            console.log(word);
+            socket.to(roomId).emit("room_update", publicRoom(room)); // everyone EXCEPT the sender
+            socket.emit("room_update", room);                        // only the sender (the drawer)
+
+        }
+        catch (error) {
+            console.error(`choose_word failed for room ${roomId}`);
+        }
+    })
 
 }
