@@ -18,13 +18,14 @@ export default function Chat({ messages, onSend }: Props) {
   return (
     <div className="w-64 flex flex-col bg-[#1d2021] border border-[#504945] rounded">
       <div className="flex-1 overflow-y-auto p-2 space-y-1 text-sm">
-        {messages.map((m, i) =>
-          m.kind === "system" ? (
-            <div key={i} className="italic text-[#7c6f64]">{m.text}</div>
-          ) : (
-            <div key={i}><span className="text-[#83a598] font-bold">{m.author}:</span> {m.text}</div>
-          )
-        )}
+        {messages.map((m, i) => {
+          if (m.kind === "chat") {
+            return <div key={i}><span className="text-[#83a598] font-bold">{m.author}:</span> {m.text}</div>;
+          }
+          // system + correct are text-only lines; color carries the meaning
+          const cls = m.kind === "correct" ? "text-[#b8bb26] font-bold" : "italic text-[#7c6f64]";
+          return <div key={i} className={cls}>{m.text}</div>;
+        })}
       </div>
       <form onSubmit={submit} className="border-t border-[#504945] p-2">
         <input

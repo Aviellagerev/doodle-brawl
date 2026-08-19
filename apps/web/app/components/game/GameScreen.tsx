@@ -47,7 +47,9 @@ export default function GameScreen({ room, myPlayerId, words, onChooseWord, sock
                 word={game.word}
                 wordLength={game.wordLength}
                 round={game.round}
+                totalRounds={room.settings.rounds}
                 drawerName={drawerName}
+                endsAt={game.endsAt}
             />
             <div className="flex gap-4">
                 <div className="w-48">

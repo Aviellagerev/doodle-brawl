@@ -3,10 +3,11 @@
 import { useEffect, useState, useRef } from "react";
 import { io, Socket } from "socket.io-client";
 import { v4 as uuidv4 } from 'uuid';
-import { RoomResponse, RoomState,ChatMessage } from "../../../packages/shared";
+import { RoomResponse, RoomState, ChatMessage, RoomSettings } from "../../../packages/shared";
 import JoinScreen from "./components/JoinScreen";
 import Lobby from "./components/Lobby";
 import GameScreen from "./components/game/GameScreen";
+import GameOver from "./components/game/GameOver";
 import Chat from "./components/game/Chat";
 export default function Home() {
   const [status, setStatus] = useState<string>("connecting...");
@@ -125,19 +126,30 @@ export default function Home() {
 
   };
 
+  const handleUpdateSettings = (settings: RoomSettings) => {
+    socketRef.current?.emit("update_settings", settings);
+  };
+
+  const handlePlayAgain = () => {
+    socketRef.current?.emit("play_again");
+  };
+
   function renderScreen() {
     // level 1: not in a room yet
     if (roomState === null) {
       return <JoinScreen onCreate={handleCreate} onJoin={handleJoin} />;
     }
 
+    const isHost = roomState.players.find((p) => p.isHost)?.id === playerId;
+
     // level 2: in a room — pick the screen for the current phase
     switch (roomState.status) {
       case "waiting":
-        return <Lobby room={roomState} onLeave={handleLeave} onStart={handleStart} />;
-      //here should be start of the game render
+        return <Lobby room={roomState} isHost={isHost} onLeave={handleLeave} onStart={handleStart} onUpdateSettings={handleUpdateSettings} />;
       case "playing":
         return <GameScreen room={roomState} myPlayerId={playerId} words={words} onChooseWord={handleChooseWord} socket={socketRef.current} />;
+      case "finished":
+        return <GameOver room={roomState} isHost={isHost} onPlayAgain={handlePlayAgain} onLeave={handleLeave} />;
     }
   }
 
