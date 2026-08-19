@@ -3,10 +3,11 @@
 import { useEffect, useState, useRef } from "react";
 import { io, Socket } from "socket.io-client";
 import { v4 as uuidv4 } from 'uuid';
-import { RoomResponse, RoomState } from "../../../packages/shared";
+import { RoomResponse, RoomState,ChatMessage } from "../../../packages/shared";
 import JoinScreen from "./components/JoinScreen";
 import Lobby from "./components/Lobby";
 import GameScreen from "./components/game/GameScreen";
+import Chat from "./components/game/Chat";
 export default function Home() {
   const [status, setStatus] = useState<string>("connecting...");
   const [socketId, setSocketId] = useState<string>("(none)");
@@ -15,10 +16,14 @@ export default function Home() {
   const socketRef = useRef<Socket | null>(null);
   const [playerId, setPlayerId] = useState("");
   const [words, setWords] = useState<string[]>([]);   // 3 choices the drawer got
-
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const addLog = (line: string) => {
     setLog((prev) => [...prev, `[${new Date().toLocaleTimeString([], { hour12: false })}] ${line}`]);
   };
+
+  // Local system line straight into the chat feed (connect/disconnect etc.)
+  const addSystem = (text: string) =>
+    setMessages((prev) => [...prev, { author: "System", text, kind: "system" }]);
 
   function getPermanentPlayerId() {
     let playerId = localStorage.getItem("skribbl_player_id");
@@ -36,11 +41,13 @@ export default function Home() {
       setStatus("connected");
       setSocketId(socket.id ?? "(unknown)");
       addLog(`connected with id ${socket.id}`);
+      addSystem("connected");
     });
 
     socket.on("disconnect", () => {
       setStatus("disconnected");
       addLog("disconnected");
+      addSystem("disconnected");
     });
 
     socket.on("pong", (counter) => {
@@ -52,12 +59,18 @@ export default function Home() {
     socket.on("word_pick", (w: string[]) => {
       setWords(w);
     });
-
+    socket.on("chat_message", (m: ChatMessage) => setMessages((prev) => [...prev, m]));
     return () => {
       socket.disconnect();
     };
 
   }, []);
+  const handleSendMessage = (text: string) => {
+  const socket = socketRef.current;
+  if (!socket) return;
+  socket.emit("send_message", { text });
+};
+
   const handleChooseWord = (word:string) => {
     const socket = socketRef.current;
     if (!socket || !roomState) return;
@@ -110,7 +123,6 @@ export default function Home() {
     if (!socket || !roomState) return;
     socket.emit("start_game", roomState.roomId);
 
-
   };
 
   function renderScreen() {
@@ -125,14 +137,14 @@ export default function Home() {
         return <Lobby room={roomState} onLeave={handleLeave} onStart={handleStart} />;
       //here should be start of the game render
       case "playing":
-        return <GameScreen room={roomState} myPlayerId={playerId}  words={words} onChooseWord = {handleChooseWord}/>
+        return <GameScreen room={roomState} myPlayerId={playerId} words={words} onChooseWord={handleChooseWord} socket={socketRef.current} />;
     }
   }
 
 
   return (
     <main className="min-h-screen p-8 font-mono bg-[#282828] text-[#ebdbb2]">
-      <div className="max-w-2xl mx-auto space-y-6">
+      <div className="max-w-6xl mx-auto space-y-6">
         <h1 className="text-3xl font-bold text-[#b8bb26] mb-4">Skribbl Lobby</h1>
 
         {/* Connection Status */}
@@ -148,8 +160,15 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Controls */}
-        {renderScreen()}
+        {/* Controls — in a room, the chat sits alongside as persistent room chrome */}
+        {roomState === null ? (
+          renderScreen()
+        ) : (
+          <div className="flex gap-4">
+            <div className="flex-1">{renderScreen()}</div>
+            <Chat messages={messages} onSend={handleSendMessage} />
+          </div>
+        )}
 
         {/* Logs */}
         <div className="mt-6">
