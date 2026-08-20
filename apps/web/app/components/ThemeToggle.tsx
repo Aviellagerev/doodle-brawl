@@ -2,8 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-// Flips the manual theme override on <html> (data-theme) and remembers it.
-// When nothing is saved, the page follows the OS setting (see globals.css).
+
 export default function ThemeToggle() {
   const [theme, setTheme] = useState<"light" | "dark" | null>(null);
 
