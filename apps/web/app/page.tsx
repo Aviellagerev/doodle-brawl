@@ -16,7 +16,6 @@ export default function Home() {
   const [roomState, setRoomState] = useState<RoomState | null>(null)
   const socketRef = useRef<Socket | null>(null);
   const [playerId, setPlayerId] = useState("");
-  const [words, setWords] = useState<string[]>([]);   // 3 choices the drawer got
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const addLog = (line: string) => {
     setLog((prev) => [...prev, `[${new Date().toLocaleTimeString([], { hour12: false })}] ${line}`]);
@@ -57,9 +56,6 @@ export default function Home() {
     socket.on("room_update", (room: RoomState) => setRoomState(room));
     socket.on("system_message", (msg: string) => addLog(msg));
 
-    socket.on("word_pick", (w: string[]) => {
-      setWords(w);
-    });
     socket.on("chat_message", (m: ChatMessage) => setMessages((prev) => [...prev, m]));
     return () => {
       socket.disconnect();
@@ -72,11 +68,10 @@ export default function Home() {
   socket.emit("send_message", { text });
 };
 
-  const handleChooseWord = (word:string) => {
+  const handleChooseWord = (word: string) => {
     const socket = socketRef.current;
-    if (!socket || !roomState) return;
-    socket.emit("choose_word", {word});
-    setWords([]);
+    if (!socket) return;
+    socket.emit("choose_word", { word });
 
   };
   const handleCreate = (name: string) => {
@@ -147,7 +142,7 @@ export default function Home() {
       case "waiting":
         return <Lobby room={roomState} isHost={isHost} onLeave={handleLeave} onStart={handleStart} onUpdateSettings={handleUpdateSettings} />;
       case "playing":
-        return <GameScreen room={roomState} myPlayerId={playerId} words={words} onChooseWord={handleChooseWord} socket={socketRef.current} />;
+        return <GameScreen room={roomState} myPlayerId={playerId} onChooseWord={handleChooseWord} socket={socketRef.current} onLeave={handleLeave} />;
       case "finished":
         return <GameOver room={roomState} isHost={isHost} onPlayAgain={handlePlayAgain} onLeave={handleLeave} />;
     }
@@ -155,49 +150,17 @@ export default function Home() {
 
 
   return (
-    <main className="min-h-screen p-8 font-mono bg-[#282828] text-[#ebdbb2]">
-      <div className="max-w-6xl mx-auto space-y-6">
-        <h1 className="text-3xl font-bold text-[#b8bb26] mb-4">Skribbl Lobby</h1>
-
-        {/* Connection Status */}
-        <div className="flex justify-between items-center bg-[#3c3836] p-3 rounded border border-[#504945]">
-          <div>
-            <span className="text-[#a89984]">Status:</span>{" "}
-            <span className={`font-bold ${status === 'disconnected' ? 'text-[#fb4934]' : 'text-[#b8bb26]'}`}>
-              {status}
-            </span>
-          </div>
-          <div className="text-sm">
-            <span className="text-[#a89984]">ID:</span> <span className="text-[#83a598]">{socketId}</span>
-          </div>
+    <main className="paper-bg min-h-screen text-ink">
+      {roomState === null ? (
+        // full-frame screens (join) own their own layout
+        renderScreen()
+      ) : (
+        // in a room: the screen + chat side by side, stacking on mobile
+        <div className="max-w-6xl mx-auto p-4 sm:p-6 flex flex-col lg:flex-row gap-4">
+          <div className="flex-1 min-w-0">{renderScreen()}</div>
+          <Chat messages={messages} onSend={handleSendMessage} />
         </div>
-
-        {/* Controls — in a room, the chat sits alongside as persistent room chrome */}
-        {roomState === null ? (
-          renderScreen()
-        ) : (
-          <div className="flex gap-4">
-            <div className="flex-1">{renderScreen()}</div>
-            <Chat messages={messages} onSend={handleSendMessage} />
-          </div>
-        )}
-
-        {/* Logs */}
-        <div className="mt-6">
-          <h2 className="text-lg font-bold mb-2 text-[#d3869b]">Logs</h2>
-          <div className="bg-[#1d2021] border border-[#504945] p-3 rounded text-sm space-y-1 h-48 overflow-y-auto">
-            {log.length === 0 ? (
-              <div className="text-[#7c6f64] italic">Waiting for events...</div>
-            ) : (
-              log.map((line, i) => (
-                <div key={i} className="text-[#a89984] font-mono whitespace-pre-wrap">
-                  {line}
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      </div>
+      )}
     </main>
   );
 }

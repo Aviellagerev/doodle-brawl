@@ -1,4 +1,5 @@
 import { RoomState, Player, GameMode } from "../../../../packages/shared/index.js";
+import { DEFAULT_SETTINGS } from "../game/skribbl.js";
 
 
 export function generateRoomCode(): string {
@@ -22,5 +23,6 @@ export function createNewRoom(host: Player, mode: GameMode = "skribbl"): RoomSta
         mode,
         players: [host],
         status: "waiting",
+        settings: { ...DEFAULT_SETTINGS },
     };
 }

@@ -1,8 +1,107 @@
 import { Server, Socket } from "socket.io";
 import { RoomStore } from "../roomStore";
-import { RoomState, Player } from "../../../../packages/shared/index.js";
+import { DrawSegment, ChatMessage } from "../../../../packages/shared/index.js";
+import { RoomState, Player, RoomSettings, CHOOSE_TIME_MS, SCORING_DELAY_MS } from "../../../../packages/shared/index.js";
 import { createNewRoom, createNewPlayer } from "./../services/roomServices.js";
-import { chooseWord, createInitialGame, pickWords, publicRoom } from "../game/skribbl.js";
+import {
+    chooseWord, createInitialGame, pickWords, publicRoom,
+    toScoring, guessPoints, drawerBonus, allGuessed, advanceTurn,
+} from "../game/skribbl.js";
+
+
+const roundTimers = new Map<string, NodeJS.Timeout>();
+
+function clearRoundTimer(roomId: string) {
+    const t = roundTimers.get(roomId);
+    if (t) {
+        clearTimeout(t);
+        roundTimers.delete(roomId);
+    }
+}
+
+async function finishRound(io: Server, roomStore: RoomStore, roomId: string) {
+    clearRoundTimer(roomId);
+    const room = await roomStore.getRoom(roomId);
+    if (!room || !room.game || room.game.phase !== "drawing") return;
+    room.game = toScoring(room.game);
+    room.game.endsAt = Date.now() + SCORING_DELAY_MS;   // deadline for the scoreboard countdown
+    await roomStore.saveRoom(room);
+    broadcastRoom(io, room); // scoring → word now revealed
+    // after the scoreboard delay, move to the next turn (or end the game)
+    roundTimers.set(roomId, setTimeout(() => advanceRound(io, roomStore, roomId), SCORING_DELAY_MS));
+}
+
+// Advance from the scoreboard to the next turn — or end the game. Auto-fired by
+// the scoring timer set in finishRound.
+async function advanceRound(io: Server, roomStore: RoomStore, roomId: string) {
+    clearRoundTimer(roomId);
+    const room = await roomStore.getRoom(roomId);
+    if (!room || !room.game || room.game.phase !== "scoring") return;
+    const result = advanceTurn(room.game, room.players, room.settings.rounds);
+    room.game = result.game;
+    if (result.done) {
+        room.status = "finished";            // → victory screen
+        await roomStore.saveRoom(room);
+        broadcastRoom(io, room);
+        return;
+    }
+    await roomStore.saveRoom(room);
+    broadcastRoom(io, room);
+    await offerWords(io, roomStore, room);    // set up the new drawer's choosing phase
+}
+
+// Set up the choosing phase: pick the candidate words, start the 15s choose
+// clock (broadcast so the drawer sees the options + countdown), and auto-pick
+// for them if they run it out.
+async function offerWords(io: Server, roomStore: RoomStore, room: RoomState) {
+    if (!room.game) return;
+    room.game.wordOptions = pickWords(room.settings.wordChoices);
+    room.game.endsAt = Date.now() + CHOOSE_TIME_MS;
+    await roomStore.saveRoom(room);
+    broadcastRoom(io, room);
+    clearRoundTimer(room.roomId);
+    roundTimers.set(room.roomId, setTimeout(() => autoPickWord(io, roomStore, room.roomId), CHOOSE_TIME_MS));
+}
+
+// Choose clock ran out → pick one of the drawer's options for them.
+async function autoPickWord(io: Server, roomStore: RoomStore, roomId: string) {
+    clearRoundTimer(roomId);
+    const room = await roomStore.getRoom(roomId);
+    if (!room || !room.game || room.game.phase !== "choosing") return;
+    const opts = room.game.wordOptions ?? pickWords(room.settings.wordChoices);
+    const word = opts[Math.floor(Math.random() * opts.length)];
+    await commitWord(io, roomStore, roomId, word);
+}
+
+// Lock in a word (from a click or an auto-pick): choosing → drawing, start the
+// draw clock. Shared by the choose_word handler and autoPickWord.
+async function commitWord(io: Server, roomStore: RoomStore, roomId: string, word: string) {
+    clearRoundTimer(roomId);
+    const room = await roomStore.getRoom(roomId);
+    if (!room || !room.game || room.game.phase !== "choosing") return;
+    const now = Date.now();
+    room.game = chooseWord(room.game, word, now, room.settings.drawTimeMs);
+    await roomStore.saveRoom(room);
+    broadcastRoom(io, room); // drawer keeps the real word, guessers get blanks
+    const delay = Math.max(0, (room.game.endsAt ?? now) - now);
+    roundTimers.set(roomId, setTimeout(() => finishRound(io, roomStore, roomId), delay));
+}
+
+// Clamp an incoming (untrusted) setting value into a sane range.
+function clamp(v: unknown, min: number, max: number, fallback: number): number {
+    const n = typeof v === "number" && Number.isFinite(v) ? v : fallback;
+    return Math.max(min, Math.min(max, Math.round(n)));
+}
+
+
+function broadcastRoom(io: Server, room: RoomState) {
+    const drawerId = room.game?.currentDrawerId;
+    const publicView = publicRoom(room);
+    for (const p of room.players) {
+        io.to(p.socketId).emit("room_update", p.id === drawerId ? room : publicView);
+    }
+}
+
 export function registerRoomHandlers(io: Server, socket: Socket, roomStore: RoomStore) {
     socket.on("create_room", async (data, callback) => {
         const hostPlayer: Player = createNewPlayer({
@@ -20,7 +119,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
             socket.join(newRoom.roomId);
             socket.data.roomId = newRoom.roomId;
             socket.data.playerId = hostPlayer.id;
-            io.to(newRoom.roomId).emit("room_update", publicRoom(newRoom));
+            broadcastRoom(io, newRoom);
             console.log(`Room ${newRoom.roomId} created by ${hostPlayer.name}`);
 
             callback({ success: true, roomId: newRoom.roomId, room: newRoom });
@@ -42,6 +141,14 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
         })
 
         try {
+            const existing = await roomStore.getRoom(roomId);
+            if (existing) {
+                const rejoining = existing.players.some((p) => p.id === newPlayer.id);
+                if (!rejoining && existing.players.length >= existing.settings.maxPlayers) {
+                    callback({ success: false, error: "Room is full." });
+                    return;
+                }
+            }
             const room = await roomStore.joinOrUpdatePlayer(roomId, newPlayer);
 
             if (room != null) {
@@ -50,8 +157,8 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
                 socket.data.roomId = room.roomId;
                 socket.data.playerId = newPlayer.id;
                 console.log(`user: ${newPlayer.name} joined id: ${newPlayer.id}`);
-                io.to(roomId).emit("room_update", publicRoom(room));
-                io.to(roomId).emit("system_message", `${newPlayer.name} joined the room`);
+                broadcastRoom(io, room);
+                io.to(roomId).emit("chat_message", { author: "System", text: `${newPlayer.name} joined the room`, kind: "system" } as ChatMessage);
                 callback({ success: true, roomId: roomId, room });
             }
             else {
@@ -75,8 +182,8 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
             const { room, removed } = await roomStore.leavePlayer(data.roomId, data.id);
             socket.leave(data.roomId);
             if (room) {
-                io.to(room.roomId).emit("room_update", publicRoom(room));
-                io.to(room.roomId).emit("system_message", `${removed?.name ?? "A player"} left the room`);
+                broadcastRoom(io, room);
+                io.to(room.roomId).emit("chat_message", { author: "System", text: `${removed?.name ?? "A player"} left the room`, kind: "system" } as ChatMessage);
             }
             callback({ success: true });
         } catch (error) {
@@ -92,8 +199,8 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
         try {
             const { room, removed } = await roomStore.leavePlayer(roomId, playerId);
             if (room) {
-                io.to(roomId).emit("room_update", publicRoom(room));
-                io.to(roomId).emit("system_message", `${removed?.name ?? "A player"} left the room`);
+                broadcastRoom(io, room);
+                io.to(roomId).emit("chat_message", { author: "System", text: `${removed?.name ?? "A player"} left the room`, kind: "system" } as ChatMessage);
             }
         } catch (error) {
             console.error(`Disconnect cleanup failed for room ${roomId}:`, error);
@@ -101,30 +208,25 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
 
     });
 
-    //button start presesd 
+    //button start pressed
     socket.on('start_game', async () => {
         const roomId = socket.data.roomId;
         if (!roomId) return;
 
         try {
-            const host = await roomStore.getHost(roomId);
-            if (!host) return;
-
-            // 1. game logic (pure): build the initial round for this mode.
-            const game = createInitialGame(host.id);
-
-            // 2. store (persist): flip status → playing, attach the game,
-            //    and hand the updated room back so we can broadcast it.
-            const room = await roomStore.startGame(roomId, game);
+            const room = await roomStore.getRoom(roomId);
             if (!room) return;
+            const host = room.players.find((p) => p.isHost);
+            if (!host || host.id !== socket.data.playerId) return; // host only
+            if (room.status !== "waiting") return;                 // don't restart mid-game
 
-            // 3. transport (emit): tell EVERYONE the game started first, so all
-            //    clients switch to the game screen...
-            io.to(roomId).emit("room_update", publicRoom(room));
+            // game logic (pure): first turn, host draws first
+            const game = createInitialGame(host.id);
+            const updated = await roomStore.startGame(roomId, game);
+            if (!updated) return;
 
-            // ...then privately offer only the drawer three words to choose from.
-            const words = pickWords();
-            io.to(host.socketId).emit("word_pick", words);
+            broadcastRoom(io, updated);   // everyone switches to the game screen
+            await offerWords(io, roomStore, updated); // set up the choosing phase + timer
         }
         catch (error) {
             console.error(`start_game failed for room ${roomId}:`, error);
@@ -138,22 +240,123 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
         try {
             const room = await roomStore.getRoom(roomId);
             if (!room || !room.game) return;
-            //room exsists + we got it ;
-            if (socket.data.playerId !== room.game.currentDrawerId) return; //not the drawer
-            if (room.game.phase !== "choosing") return; //wrong phase
-            const word = data.word;//validate
-            if (typeof word !== "string" || word.length === 0) return; //wrong input?
-            const nextGame = chooseWord(room.game, word);
-            room.game = nextGame;
-            await roomStore.saveRoom(room);
-            console.log(word);
-            socket.to(roomId).emit("room_update", publicRoom(room)); // everyone EXCEPT the sender
-            socket.emit("room_update", room);                        // only the sender (the drawer)
-
+            if (socket.data.playerId !== room.game.currentDrawerId) return; // not the drawer
+            if (room.game.phase !== "choosing") return;                     // wrong phase
+            const word = data.word;
+            if (typeof word !== "string" || word.length === 0) return;
+            // must be one of the offered options (can't inject an arbitrary word)
+            if (room.game.wordOptions && !room.game.wordOptions.includes(word)) return;
+            await commitWord(io, roomStore, roomId, word);
         }
         catch (error) {
-            console.error(`choose_word failed for room ${roomId}`);
+            console.error(`choose_word failed for room ${roomId}`, error);
         }
     })
+    socket.on("draw", async (segment: DrawSegment) => {
+        const roomId = socket.data.roomId;
+        if (!roomId) return;
+
+        const room = await roomStore.getRoom(roomId);
+        if (!room || !room.game) return;
+
+        // only the drawer may draw — stops a guesser from scribbling via devtools
+        if (socket.data.playerId !== room.game.currentDrawerId) return;
+
+        // relay to everyone else in the room (socket.to excludes the sender)
+        socket.to(roomId).emit("draw", segment);
+    });
+    socket.on("clear", async () => {
+        const roomId = socket.data.roomId;
+        if (!roomId) return;
+        const room = await roomStore.getRoom(roomId);
+        if (!room || !room.game) return;
+        if (socket.data.playerId !== room.game.currentDrawerId) return; // only the drawer clears
+        socket.to(roomId).emit("clear");
+    });
+    socket.on("send_message", async (data) => {
+        const roomId = socket.data.roomId;
+        if (!roomId) return;
+        const raw = data.text;
+        if (typeof raw !== "string" || raw.trim().length === 0) return;
+        const text = raw.trim();
+
+        const room = await roomStore.getRoom(roomId);
+        if (!room) return;
+        const player = room.players.find((p) => p.id === socket.data.playerId);
+        if (!player) return;
+
+        const game = room.game;
+
+        // --- guess detection: only while drawing, and only against the secret word ---
+        if (game && game.phase === "drawing" && game.word) {
+            const isWord = text.toLowerCase() === game.word.toLowerCase();
+            if (isWord) {
+                const isDrawer = player.id === game.currentDrawerId;
+                const already = game.guessedIds.includes(player.id);
+                // NEVER echo the actual word into chat — it would leak to everyone.
+                // The drawer / an already-correct guesser typing it is just swallowed.
+                if (isDrawer || already) return;
+
+                // correct guess → time-based points for the guesser + bonus for the drawer
+                const timeLeft = (game.endsAt ?? Date.now()) - Date.now();
+                const pts = guessPoints(timeLeft, room.settings.drawTimeMs);
+                player.score = (player.score ?? 0) + pts;
+                const drawer = room.players.find((p) => p.id === game.currentDrawerId);
+                if (drawer) drawer.score = (drawer.score ?? 0) + drawerBonus(pts);
+                game.guessedIds.push(player.id);
+                await roomStore.saveRoom(room);
+
+                // announce WITHOUT the word, then push the updated scores
+                const note: ChatMessage = { author: "System", text: `${player.name} guessed the word!`, kind: "correct" };
+                io.to(roomId).emit("chat_message", note);
+                broadcastRoom(io, room);
+
+                // everyone guessed? end the round now instead of waiting for the clock
+                if (allGuessed(game, room.players)) {
+                    await finishRound(io, roomStore, roomId);
+                }
+                return;
+            }
+        }
+
+        // --- normal chat ---
+        const message: ChatMessage = { author: player.name, text, kind: "chat" };
+        io.to(roomId).emit("chat_message", message);   // io.to = everyone INCLUDING sender
+    });
+
+    socket.on("update_settings", async (data) => {
+        const roomId = socket.data.roomId;
+        if (!roomId) return;
+        const room = await roomStore.getRoom(roomId);
+        if (!room) return;
+        const host = room.players.find((p) => p.isHost);
+        if (!host || host.id !== socket.data.playerId) return; // host only
+        if (room.status !== "waiting") return;                 // settings lock once playing
+
+        const s = (data ?? {}) as Partial<RoomSettings>;
+        room.settings = {
+            rounds: clamp(s.rounds, 1, 10, room.settings.rounds),
+            drawTimeMs: clamp(s.drawTimeMs, 15_000, 300_000, room.settings.drawTimeMs),
+            wordChoices: clamp(s.wordChoices, 1, 5, room.settings.wordChoices),
+            maxPlayers: clamp(s.maxPlayers, 2, 20, room.settings.maxPlayers),
+        };
+        await roomStore.saveRoom(room);
+        broadcastRoom(io, room);
+    });
+
+    socket.on("play_again", async () => {
+        const roomId = socket.data.roomId;
+        if (!roomId) return;
+        const room = await roomStore.getRoom(roomId);
+        if (!room) return;
+        const host = room.players.find((p) => p.isHost);
+        if (!host || host.id !== socket.data.playerId) return; // host only
+        room.status = "waiting";
+        room.game = undefined;
+        for (const p of room.players) p.score = 0;
+        await roomStore.saveRoom(room);
+        broadcastRoom(io, room);
+    });
+
 
 }

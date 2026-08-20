@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import ThemeToggle from "./ThemeToggle";
+import { initialsOf, colorOf } from "../lib/avatar";
 
 type JoinScreenProps = {
   onCreate: (name: string) => void;
@@ -8,45 +10,107 @@ type JoinScreenProps = {
 };
 
 export default function JoinScreen({ onCreate, onJoin }: JoinScreenProps) {
-  const [playerName, setPlayerName] = useState<string>("");
-  const [roomCode, setRoomCode] = useState<string>("");
+  const [name, setName] = useState("");
+  const [code, setCode] = useState("");
+
+  const hardShadow = (x: number, y: number) => ({ boxShadow: `${x}px ${y}px 0 var(--outline)` });
 
   return (
-    <div className="bg-[#3c3836] p-6 rounded border border-[#504945] space-y-4">
-      <div className="space-y-2">
-        <label className="block text-sm text-[#a89984]">Player Name</label>
-        <input
-          type="text"
-          value={playerName}
-          onChange={(e) => setPlayerName(e.target.value)}
-          placeholder="Enter your name"
-          className="w-full bg-[#1d2021] border border-[#504945] p-2 rounded text-[#ebdbb2] focus:outline-none focus:border-[#83a598] transition-colors"
-        />
+    <div className="relative min-h-screen flex items-center justify-center gap-8 sm:gap-14 flex-wrap p-5 sm:p-10">
+      <div className="absolute top-5 right-6">
+        <ThemeToggle />
       </div>
 
-      <div className="space-y-2">
-        <label className="block text-sm text-[#a89984]">Room Code (for joining)</label>
-        <input
-          type="text"
-          value={roomCode}
-          onChange={(e) => setRoomCode(e.target.value)}
-          placeholder="e.g. ABCD"
-          className="w-full bg-[#1d2021] border border-[#504945] p-2 rounded text-[#ebdbb2] focus:outline-none focus:border-[#83a598] transition-colors uppercase"
-        />
+      {/* left — wordmark, tagline, stat stickers */}
+      <div className="w-full max-w-[430px]">
+        <div className="relative inline-block mb-3.5" style={{ transform: "rotate(-2deg)" }}>
+          <span
+            className="tape absolute"
+            style={{ top: -13, left: -14, width: 78, height: 26, transform: "rotate(-14deg)" }}
+          />
+          <h2 className="font-loud m-0" style={{ fontWeight: 800, fontSize: "clamp(48px, 12vw, 74px)", lineHeight: 0.92, letterSpacing: "-1px" }}>
+            Doodle
+            <br />
+            <span className="text-orange">Brawl</span>
+          </h2>
+        </div>
+        <p className="font-loud italic text-ink/60 m-0 mb-6" style={{ fontWeight: 700, fontSize: 19, lineHeight: 1.35, maxWidth: 340 }}>
+          Draw badly. Guess loudly. Win somehow.
+        </p>
+        <div className="flex gap-2 flex-wrap">
+          <span
+            className="bg-lime text-ink px-3 py-1.5 font-bold text-xs"
+            style={{ border: "2.5px solid var(--outline)", borderRadius: 11, ...hardShadow(3, 3), transform: "rotate(-1.5deg)" }}
+          >
+            1,204 playing now
+          </span>
+          <span
+            className="bg-card text-ink px-3 py-1.5 font-bold text-xs"
+            style={{ border: "2.5px solid var(--outline)", borderRadius: 11, ...hardShadow(3, 3), transform: "rotate(1.5deg)" }}
+          >
+            up to 12 per room
+          </span>
+        </div>
       </div>
 
-      <div className="flex gap-4 pt-2">
+      {/* right — the card */}
+      <div
+        className="relative bg-card box-border w-full max-w-[436px]"
+        style={{ transform: "rotate(1deg)", borderRadius: "10px 26px 12px 24px", boxShadow: "0 16px 34px rgba(58,47,38,.18)", padding: "30px 30px 28px" }}
+      >
+        <span
+          className="tape absolute"
+          style={{ top: -15, left: "50%", transform: "translateX(-50%) rotate(-2deg)", width: 118, height: 30 }}
+        />
+
+        {/* name + avatar */}
+        <div className="flex gap-4 items-center" style={{ margin: "12px 0 18px" }}>
+          <div
+            className="grid place-items-center font-loud flex-none text-card"
+            style={{ width: 96, height: 96, borderRadius: "50%", background: colorOf(name), boxShadow: "0 0 0 3px var(--card), 0 0 0 6px var(--outline)", fontWeight: 800, fontSize: 30, transform: "rotate(3deg)" }}
+          >
+            {initialsOf(name)}
+          </div>
+          <div className="flex-1 min-w-0">
+            <label className="block mb-1.5 font-mono uppercase text-ink/45" style={{ fontWeight: 700, fontSize: 10.5, letterSpacing: ".12em" }}>
+              Your name
+            </label>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Jelly Bandit"
+              className="font-loud w-full bg-transparent outline-none text-ink border-b-[3px] border-dashed border-ink/40 placeholder:text-ink/30"
+              style={{ padding: "2px 2px 9px", fontWeight: 700, fontSize: 24 }}
+            />
+          </div>
+        </div>
+
+        {/* room code */}
+        <label className="block mb-1.5 font-mono uppercase text-ink/45" style={{ fontWeight: 700, fontSize: 10.5, letterSpacing: ".12em" }}>
+          Room code
+        </label>
+        <input
+          value={code}
+          onChange={(e) => setCode(e.target.value.toUpperCase())}
+          placeholder="PLZ-4NT"
+          className="font-loud w-full box-border outline-none paper-bg text-ink border-[2.5px] border-dashed border-ink/35 placeholder:text-ink/30 mb-5"
+          style={{ borderRadius: 14, padding: "13px 15px", fontWeight: 700, fontSize: 19, letterSpacing: ".2em" }}
+        />
+
+        {/* actions: join the entered code, or make a fresh room */}
         <button
-          onClick={() => onCreate(playerName)}
-          className="flex-1 bg-[#98971a] hover:bg-[#b8bb26] text-[#282828] font-bold py-2 px-4 rounded transition-colors"
+          onClick={() => onJoin(name, code)}
+          className="font-loud w-full mb-3 text-card cursor-pointer bg-orange"
+          style={{ border: "3px solid var(--outline)", borderRadius: "34px 30px 34px 28px", padding: "18px 0", fontWeight: 800, fontSize: 27, ...hardShadow(5, 6) }}
         >
-          Create Room
+          Play now!
         </button>
         <button
-          onClick={() => onJoin(playerName, roomCode)}
-          className="flex-1 bg-[#458588] hover:bg-[#83a598] text-[#282828] font-bold py-2 px-4 rounded transition-colors"
+          onClick={() => onCreate(name)}
+          className="font-loud w-full text-ink cursor-pointer bg-card"
+          style={{ border: "3px solid var(--outline)", borderRadius: "30px 34px 28px 34px", padding: "13px 0", fontWeight: 700, fontSize: 17, ...hardShadow(5, 6) }}
         >
-          Join Room
+          Make a room
         </button>
       </div>
     </div>

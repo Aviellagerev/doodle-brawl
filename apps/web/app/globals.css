@@ -1,6 +1,81 @@
 @import "tailwindcss";
 
+/* Design tokens exposed as Tailwind utilities: bg-card, text-ink, bg-orange,
+   border-outline, font-loud, etc. `inline` means each utility resolves the
+   CSS var at runtime, so dark mode swaps them everywhere for free. */
 @theme inline {
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-quicksand), system-ui, sans-serif;
+  --font-loud: var(--font-shantell), "Comic Sans MS", cursive;
+  --font-mono: var(--font-geist-mono), ui-monospace, Menlo, monospace;
+
+  --color-paper: var(--paper);
+  --color-paperdeep: var(--paper-deep);
+  --color-card: var(--card);
+  --color-ink: var(--ink);
+  --color-outline: var(--outline);
+  --color-canvas: var(--canvas);
+  --color-orange: var(--orange);
+  --color-cyan: var(--cyan);
+  --color-lime: var(--lime);
+  --color-rose: var(--rose);
+  --color-amber: var(--amber);
+}
+
+/* Light palette (the default). */
+:root {
+  --paper: #f3ebdb;
+  --paper-deep: #e8dcc4;
+  --card: #fffdf7;
+  --ink: #3a2f26;
+  --outline: #3a2f26;   /* border + hard-shadow ink */
+  --canvas: #f7f2e8;    /* the drawing surface stays paper-white in both modes */
+  --orange: oklch(0.63 0.16 35);
+  --cyan: oklch(0.68 0.13 200);
+  --lime: oklch(0.75 0.14 110);
+  --rose: oklch(0.72 0.16 20);
+  --amber: oklch(0.78 0.15 80);
+  --tape: rgba(214, 192, 142, 0.65);
+  --tape-edge: rgba(160, 140, 95, 0.4);
+}
+
+/* Dark palette — same roles, swapped values. Light is the default; dark applies
+   only when the user turns it on via the toggle (data-theme="dark" on <html>). */
+:root[data-theme="dark"] {
+  --paper: #25201c;
+  --paper-deep: #1c1815;
+  --card: #332b25;
+  --ink: #f3ebdb;
+  --outline: #17130f;
+  --orange: oklch(0.72 0.16 35);
+  --cyan: oklch(0.70 0.12 200);
+  --lime: oklch(0.76 0.14 110);
+  --rose: oklch(0.68 0.16 20);
+  --amber: oklch(0.78 0.14 80);
+  --tape: rgba(214, 192, 142, 0.2);
+  --tape-edge: rgba(214, 192, 142, 0.3);
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--paper);
+  color: var(--ink);
+}
+
+/* craft-paper weave — two faint diagonal hatches over the paper color */
+.paper-bg {
+  background-color: var(--paper);
+  background-image:
+    repeating-linear-gradient(115deg, rgba(120, 95, 60, 0.05) 0 2px, transparent 2px 7px),
+    repeating-linear-gradient(25deg, rgba(120, 95, 60, 0.04) 0 2px, transparent 2px 9px);
+}
+:root[data-theme="dark"] .paper-bg {
+  background-image:
+    repeating-linear-gradient(115deg, rgba(243, 235, 219, 0.035) 0 2px, transparent 2px 7px),
+    repeating-linear-gradient(25deg, rgba(243, 235, 219, 0.03) 0 2px, transparent 2px 9px);
+}
+
+/* tape strip — a tan rectangle, half-overlapping a card edge */
+.tape {
+  background: var(--tape);
+  box-shadow: inset 0 0 0 1px var(--tape-edge);
 }

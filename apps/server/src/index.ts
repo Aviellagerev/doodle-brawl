@@ -10,7 +10,9 @@ app.get("/health", async () => ({ ok: true }));
 const start = async () => {
     await app.listen({ port: config.port, host: config.host });
     const io = new Server(app.server, {
-        cors: { origin: config.corsOrigin },
+        // "*" (default in dev) reflects any origin so LAN devices connect; in
+        // production CORS_ORIGIN pins it to the web domain.
+        cors: { origin: config.corsOrigin === "*" ? true : config.corsOrigin },
     });
 
     io.on("connection", (socket) => {

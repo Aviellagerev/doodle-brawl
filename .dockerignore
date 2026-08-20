@@ -1,0 +1,7 @@
+# keep build contexts small + don't leak local dev config into images
+**/node_modules
+**/.next
+**/dist
+**/.git
+**/.env.local
+**/*.log

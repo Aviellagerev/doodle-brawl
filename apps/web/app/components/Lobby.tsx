@@ -1,5 +1,7 @@
+import type { ReactNode } from "react";
 import { RoomState, RoomSettings } from "../../../../packages/shared";
-import PlayerList from "./game/PlayerList";
+import Avatar from "./Avatar";
+import ThemeToggle from "./ThemeToggle";
 
 type LobbyProps = {
     room: RoomState;
@@ -9,63 +11,106 @@ type LobbyProps = {
     onUpdateSettings: (settings: RoomSettings) => void;
 };
 
+const hardShadow = (x: number, y: number) => ({ boxShadow: `${x}px ${y}px 0 var(--outline)` });
+const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
+const tilt = (name: string) => (name.charCodeAt(0) % 9) - 4; // stable ±4° per name
+
 export default function Lobby({ room, isHost, onLeave, onStart, onUpdateSettings }: LobbyProps) {
     const s = room.settings;
-    // change one field → send the whole (merged) settings object to the server
     const set = (patch: Partial<RoomSettings>) => onUpdateSettings({ ...s, ...patch });
+    const emptySlots = Math.max(0, Math.min(s.maxPlayers, 12) - room.players.length);
 
     return (
-        <div className="bg-[#3c3836] p-6 rounded border border-[#504945] space-y-4">
-            <header className="text-lg text-[#a89984]">
-                Lobby code: <span className="text-[#b8bb26] font-bold">{room.roomId}</span>
-            </header>
-
-            <PlayerList players={room.players} />
-
-            <div className="space-y-2">
-                <h3 className="text-sm font-bold text-[#d3869b]">Settings</h3>
-                <SettingRow label="Rounds" value={s.rounds} min={1} max={10} disabled={!isHost}
-                    onChange={(v) => set({ rounds: v })} />
-                <SettingRow label="Draw time (s)" value={Math.round(s.drawTimeMs / 1000)} min={15} max={300} disabled={!isHost}
-                    onChange={(v) => set({ drawTimeMs: v * 1000 })} />
-                <SettingRow label="Word choices" value={s.wordChoices} min={1} max={5} disabled={!isHost}
-                    onChange={(v) => set({ wordChoices: v })} />
-                <SettingRow label="Max players" value={s.maxPlayers} min={2} max={20} disabled={!isHost}
-                    onChange={(v) => set({ maxPlayers: v })} />
-                {!isHost && <p className="text-xs italic text-[#7c6f64]">Only the host can change settings.</p>}
+        <div className="space-y-5">
+            {/* header */}
+            <div className="flex items-center justify-between flex-wrap gap-3">
+                <div className="flex items-baseline gap-3.5 flex-wrap">
+                    <span className="font-loud" style={{ fontWeight: 800, fontSize: 27 }}>The waiting room</span>
+                    <span className="tape font-loud" style={{ border: "2.5px solid var(--outline)", borderRadius: 11, ...hardShadow(3, 3), padding: "6px 13px", fontWeight: 800, fontSize: 16, letterSpacing: ".2em", transform: "rotate(-1.5deg)" }}>{room.roomId}</span>
+                </div>
+                <div className="flex gap-2.5">
+                    <ThemeToggle />
+                    <button onClick={onLeave} className="font-bold cursor-pointer bg-card text-rose" style={{ border: "2.5px solid var(--outline)", borderRadius: 12, ...hardShadow(3, 3), padding: "8px 13px", fontSize: 12 }}>Leave room</button>
+                </div>
             </div>
 
-            <div className="flex gap-3">
-                <button onClick={onLeave}
-                    className="bg-[#504945] hover:bg-[#665c54] text-[#ebdbb2] font-bold py-2 px-4 rounded transition-colors">
-                    Leave
-                </button>
-                {isHost && (
-                    <button onClick={onStart}
-                        className="bg-[#98971a] hover:bg-[#b8bb26] text-[#282828] font-bold py-2 px-4 rounded transition-colors">
-                        Start
-                    </button>
-                )}
+            {/* body */}
+            <div className="flex gap-4 items-start flex-wrap">
+                <div className="flex-1 min-w-[280px] flex flex-col gap-4">
+                    {/* player grid */}
+                    <div className="bg-card" style={{ borderRadius: "8px 22px 10px 20px", boxShadow: "0 10px 24px rgba(58,47,38,.14)", padding: 22 }}>
+                        <div className="flex justify-between items-baseline mb-4 flex-wrap gap-2">
+                            <span className="font-mono uppercase text-ink/45" style={{ fontWeight: 700, fontSize: 11, letterSpacing: ".12em" }}>Who&apos;s here — {room.players.length} / {s.maxPlayers}</span>
+                            <span className="font-loud italic text-ink/50" style={{ fontWeight: 700, fontSize: 13 }}>waiting on the host…</span>
+                        </div>
+                        <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(54px, 1fr))" }}>
+                            {room.players.map((p) => (
+                                <div key={p.id} className="flex flex-col items-center gap-1.5">
+                                    <div className="relative">
+                                        <Avatar name={p.name} size={54} ring rotate={tilt(p.name)} />
+                                        {p.isHost && (
+                                            <span className="absolute font-bold" style={{ top: -12, left: "50%", transform: "translateX(-50%) rotate(-7deg)", border: "2px solid var(--outline)", borderRadius: 7, background: "var(--amber)", color: "var(--ink)", ...hardShadow(2, 2), padding: "1px 6px", fontSize: 9, letterSpacing: ".08em" }}>HOST</span>
+                                        )}
+                                    </div>
+                                    <span className="font-bold text-center truncate max-w-full" style={{ fontSize: 12 }}>{p.name}</span>
+                                </div>
+                            ))}
+                            {Array.from({ length: emptySlots }).map((_, i) => (
+                                <div key={`e${i}`} className="grid place-items-center" style={{ width: 54, height: 54, borderRadius: "50%", border: "3px dashed color-mix(in srgb, var(--ink) 22%, transparent)", color: "color-mix(in srgb, var(--ink) 16%, transparent)", fontSize: 22, fontWeight: 600 }}>+</div>
+                            ))}
+                        </div>
+                    </div>
+
+                    {isHost && (
+                        <button onClick={onStart} className="font-loud text-card cursor-pointer bg-orange" style={{ border: "3px solid var(--outline)", borderRadius: "34px 30px 34px 30px", ...hardShadow(6, 7), padding: "20px 0", fontWeight: 800, fontSize: 30 }}>Start the chaos →</button>
+                    )}
+                </div>
+
+                {/* settings */}
+                <div className="w-full lg:w-[300px] flex-none bg-card" style={{ borderRadius: "20px 8px 22px 8px", boxShadow: "0 10px 24px rgba(58,47,38,.14)", padding: "14px 16px" }}>
+                    <div className="flex justify-between items-center mb-2.5">
+                        <span className="font-mono uppercase text-ink/45" style={{ fontWeight: 700, fontSize: 11, letterSpacing: ".12em" }}>Room settings</span>
+                        <span className="text-ink/40" style={{ fontWeight: 600, fontSize: 10 }}>{isHost ? "host only" : "view only"}</span>
+                    </div>
+                    <div className="flex flex-col gap-2">
+                        <Row label="Rounds" display={String(s.rounds)} editable={isHost}
+                            onDec={() => set({ rounds: clamp(s.rounds - 1, 1, 10) })}
+                            onInc={() => set({ rounds: clamp(s.rounds + 1, 1, 10) })} />
+                        <Row label="Draw time" display={`${Math.round(s.drawTimeMs / 1000)}s`} editable={isHost}
+                            onDec={() => set({ drawTimeMs: clamp(Math.round(s.drawTimeMs / 1000) - 10, 15, 300) * 1000 })}
+                            onInc={() => set({ drawTimeMs: clamp(Math.round(s.drawTimeMs / 1000) + 10, 15, 300) * 1000 })} />
+                        <Row label="Word choices" display={String(s.wordChoices)} editable={isHost}
+                            onDec={() => set({ wordChoices: clamp(s.wordChoices - 1, 1, 5) })}
+                            onInc={() => set({ wordChoices: clamp(s.wordChoices + 1, 1, 5) })} />
+                        <Row label="Max players" display={String(s.maxPlayers)} editable={isHost} last
+                            onDec={() => set({ maxPlayers: clamp(s.maxPlayers - 1, 2, 20) })}
+                            onInc={() => set({ maxPlayers: clamp(s.maxPlayers + 1, 2, 20) })} />
+                    </div>
+                </div>
             </div>
         </div>
     );
 }
 
-function SettingRow({ label, value, min, max, disabled, onChange }: {
-    label: string; value: number; min: number; max: number; disabled: boolean; onChange: (v: number) => void;
+function Row({ label, display, editable, onDec, onInc, last }: {
+    label: string; display: string; editable: boolean; onDec: () => void; onInc: () => void; last?: boolean;
 }) {
     return (
-        <div className="flex justify-between items-center text-sm">
-            <span className="text-[#ebdbb2]">{label}</span>
-            <input
-                type="number"
-                value={value}
-                min={min}
-                max={max}
-                disabled={disabled}
-                onChange={(e) => onChange(Number(e.target.value))}
-                className="w-20 bg-[#1d2021] border border-[#504945] rounded p-1 text-right text-[#ebdbb2] disabled:opacity-60"
-            />
+        <div className={`flex justify-between items-center ${last ? "" : "border-b-2 border-dotted border-ink/20 pb-[7px]"}`}>
+            <span style={{ fontWeight: 600, fontSize: 13 }}>{label}</span>
+            <span className="flex items-center gap-2.5">
+                {editable && <StepBtn onClick={onDec}>−</StepBtn>}
+                <b className="font-loud text-center" style={{ fontWeight: 800, fontSize: 17, minWidth: 40 }}>{display}</b>
+                {editable && <StepBtn onClick={onInc}>+</StepBtn>}
+            </span>
         </div>
+    );
+}
+
+function StepBtn({ onClick, children }: { onClick: () => void; children: ReactNode }) {
+    return (
+        <button onClick={onClick} className="grid place-items-center paper-bg cursor-pointer font-bold text-ink" style={{ width: 24, height: 24, border: "2.5px solid var(--outline)", borderRadius: 8, fontSize: 13 }}>
+            {children}
+        </button>
     );
 }

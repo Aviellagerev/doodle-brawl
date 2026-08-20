@@ -1,0 +1,39 @@
+# Production stack — runs on the HOME server. The VPS's Caddy reverse-proxies to
+# these over WireGuard. Ports are published ONLY on the WireGuard IP, so nothing
+# is reachable from the home LAN or the internet.
+#
+#   WG_IP=10.0.0.2 PUBLIC_URL=https://draw.lagerev.dev \
+#     docker compose -f docker-compose.prod.yml up -d --build
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # internal only — reachable by `server` via the compose network as host "redis"
+
+  server:
+    build:
+      context: .
+      dockerfile: apps/server/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - redis
+    environment:
+      PORT: "3001"
+      HOST: "0.0.0.0"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      CORS_ORIGIN: "${PUBLIC_URL:-https://draw.lagerev.dev}"
+    ports:
+      - "${WG_IP:-10.0.0.2}:3001:3001"   # WireGuard interface only
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        # baked into the client bundle at build time
+        NEXT_PUBLIC_SERVER_URL: "${PUBLIC_URL:-https://draw.lagerev.dev}"
+    restart: unless-stopped
+    ports:
+      - "${WG_IP:-10.0.0.2}:3000:3000"   # WireGuard interface only
