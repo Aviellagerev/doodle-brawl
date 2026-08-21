@@ -12,13 +12,22 @@ type JoinScreenProps = {
 export default function JoinScreen({ onCreate, onJoin }: JoinScreenProps) {
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
+  const [blob, setBlob] = useState(0);      // reroll counter for the avatar colour
+  const [showHelp, setShowHelp] = useState(false);
 
   const hardShadow = (x: number, y: number) => ({ boxShadow: `${x}px ${y}px 0 var(--outline)` });
 
   return (
     <div className="relative min-h-screen flex items-center justify-center gap-8 sm:gap-14 flex-wrap p-5 sm:p-10">
-      <div className="absolute top-5 right-6">
+      <div className="absolute top-5 right-6 flex gap-2.5">
         <ThemeToggle />
+        <button
+          onClick={() => setShowHelp(true)}
+          className="font-bold cursor-pointer bg-card text-ink"
+          style={{ border: "2.5px solid var(--outline)", borderRadius: 12, ...hardShadow(3, 3), padding: "8px 13px", fontSize: 12 }}
+        >
+          How to play
+        </button>
       </div>
 
       {/* left — wordmark, tagline, stat stickers */}
@@ -65,11 +74,21 @@ export default function JoinScreen({ onCreate, onJoin }: JoinScreenProps) {
 
         {/* name + avatar */}
         <div className="flex gap-4 items-center" style={{ margin: "12px 0 18px" }}>
-          <div
-            className="grid place-items-center font-loud flex-none text-card"
-            style={{ width: 96, height: 96, borderRadius: "50%", background: colorOf(name), boxShadow: "0 0 0 3px var(--card), 0 0 0 6px var(--outline)", fontWeight: 800, fontSize: 30, transform: "rotate(3deg)" }}
-          >
-            {initialsOf(name)}
+          <div className="relative flex-none">
+            <div
+              className="grid place-items-center font-loud text-card"
+              style={{ width: 96, height: 96, borderRadius: "50%", background: colorOf(name, blob), boxShadow: "0 0 0 3px var(--card), 0 0 0 6px var(--outline)", fontWeight: 800, fontSize: 30, transform: "rotate(3deg)" }}
+            >
+              {initialsOf(name)}
+            </div>
+            <button
+              onClick={() => setBlob((b) => b + 1)}
+              title="New look"
+              className="absolute grid place-items-center cursor-pointer font-bold bg-lime text-ink"
+              style={{ right: -10, bottom: -8, width: 36, height: 36, border: "2.5px solid var(--outline)", borderRadius: 12, boxShadow: "2px 2px 0 var(--outline)", fontSize: 15 }}
+            >
+              ↻
+            </button>
           </div>
           <div className="flex-1 min-w-0">
             <label className="block mb-1.5 font-mono uppercase text-ink/45" style={{ fontWeight: 700, fontSize: 10.5, letterSpacing: ".12em" }}>
@@ -113,6 +132,36 @@ export default function JoinScreen({ onCreate, onJoin }: JoinScreenProps) {
           Make a room
         </button>
       </div>
+
+      {showHelp && (
+        <div
+          className="fixed inset-0 z-50 grid place-items-center p-5"
+          style={{ background: "rgba(58,47,38,.45)" }}
+          onClick={() => setShowHelp(false)}
+        >
+          <div
+            className="relative bg-card w-full max-w-[420px]"
+            onClick={(e) => e.stopPropagation()}
+            style={{ border: "3px solid var(--outline)", borderRadius: "18px 8px 20px 10px", boxShadow: "0 16px 34px rgba(58,47,38,.3)", padding: "26px 26px 22px", transform: "rotate(-1deg)" }}
+          >
+            <span className="tape absolute" style={{ top: -13, left: 24, width: 96, height: 26, transform: "rotate(-4deg)" }} />
+            <h3 className="font-loud m-0 mb-3" style={{ fontWeight: 800, fontSize: 26 }}>How to play</h3>
+            <ul className="m-0 pl-5 text-ink/80" style={{ fontSize: 14, lineHeight: 1.7, fontWeight: 500 }}>
+              <li>One player draws a secret word — everyone else races to guess it in chat.</li>
+              <li>Guess sooner to score more. The drawer earns points for each correct guess.</li>
+              <li>Letters get revealed as hints while the clock winds down.</li>
+              <li>Most points after the final round wins the brawl.</li>
+            </ul>
+            <button
+              onClick={() => setShowHelp(false)}
+              className="font-loud w-full mt-5 text-card cursor-pointer bg-orange"
+              style={{ border: "3px solid var(--outline)", borderRadius: "28px 32px 28px 32px", padding: "12px 0", fontWeight: 800, fontSize: 18, ...hardShadow(4, 5) }}
+            >
+              Got it
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

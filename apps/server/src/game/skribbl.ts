@@ -1,5 +1,6 @@
 
 import { GameState, GamePhase, RoomState, Player, RoomSettings } from "../../../../packages/shared/index.js";
+import { WORD_BANK } from "./words.js";
 
 
 export const DEFAULT_SETTINGS: RoomSettings = {
@@ -7,6 +8,11 @@ export const DEFAULT_SETTINGS: RoomSettings = {
   drawTimeMs: 60_000,
   wordChoices: 3,
   maxPlayers: 8,
+  language: "en",
+  lists: [],            // [] = all lists for the language
+  customWords: [],
+  customWordsOnly: false,
+  hints: 2,             // reveal up to 2 letters over the drawing time
 };
 
 
@@ -23,14 +29,30 @@ export function canAdvance(from: GamePhase, to: GamePhase): boolean {
 }
 
 // --- Word selection ----------------------------------------------------------
-const drawingWords: string[] = [
-  "apple", "house", "car", "tree", "sun", "cat", "dog", "cloud", "chair",
-  "book", "pizza", "clock", "guitar", "banana", "star", "pencil", "fish",
-  "cup", "bird", "elephant",
-];
+// Filters the loaded word bank by the room's language + enabled lists (and/or
+// custom words), then returns `count` distinct random words. Falls back safely
+// so a game can never stall on an empty pool.
+export function pickWords(count: number, settings: RoomSettings): string[] {
+  const custom = settings.customWords.map((w) => w.trim()).filter(Boolean);
 
-export function pickWords(count: number): string[] {
-  return [...drawingWords].sort(() => 0.5 - Math.random()).slice(0, count);
+  let pool: string[];
+  if (settings.customWordsOnly) {
+    pool = custom;
+  } else {
+    let bank = WORD_BANK.filter((e) => e.lang === settings.language);
+    if (settings.lists.length) {
+      const narrowed = bank.filter((e) => settings.lists.includes(e.list));
+      if (narrowed.length) bank = narrowed; // don't let a bad filter empty the pool
+    }
+    pool = [...bank.map((e) => e.word), ...custom];
+  }
+
+  const uniq = [...new Set(pool)];
+  if (uniq.length === 0) {
+    // last resort — never leave the drawer with nothing to pick
+    return WORD_BANK.slice(0, count).map((e) => e.word);
+  }
+  return uniq.sort(() => 0.5 - Math.random()).slice(0, Math.min(count, uniq.length));
 }
 
 // A fresh "choosing" turn for the given drawer.
@@ -45,7 +67,25 @@ function choosingTurn(drawerId: string, round: number, drawnThisRound: string[])
     guessedIds: [],
     drawnThisRound,
     wordOptions: null,
+    hint: null,
   };
+}
+
+// Build the initial reveal mask for a word: spaces shown, every letter hidden.
+export function initialHint(word: string): string[] {
+  return [...word].map((c) => (c === " " ? " " : ""));
+}
+
+// Reveal one more random hidden letter, keeping at least one letter hidden.
+// Mutates game.hint in place; returns true if a letter was revealed.
+export function revealHintLetter(game: GameState): boolean {
+  if (!game.word || !game.hint) return false;
+  const hidden: number[] = [];
+  for (let i = 0; i < game.hint.length; i++) if (game.hint[i] === "") hidden.push(i);
+  if (hidden.length <= 1) return false;   // never uncover the last letter
+  const i = hidden[Math.floor(Math.random() * hidden.length)];
+  game.hint[i] = game.word[i];
+  return true;
 }
 
 export function createInitialGame(drawerId: string): GameState {
@@ -74,6 +114,7 @@ export function chooseWord(game: GameState, word: string, now: number, drawTimeM
     endsAt: now + drawTimeMs,
     guessedIds: [],
     wordOptions: null,   // options consumed once a word is chosen
+    hint: initialHint(word),
   };
 }
 

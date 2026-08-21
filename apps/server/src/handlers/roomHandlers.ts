@@ -1,15 +1,18 @@
 import { Server, Socket } from "socket.io";
-import { RoomStore } from "../roomStore";
+import { RoomStore } from "../roomStore.js";
 import { DrawSegment, ChatMessage } from "../../../../packages/shared/index.js";
 import { RoomState, Player, RoomSettings, CHOOSE_TIME_MS, SCORING_DELAY_MS } from "../../../../packages/shared/index.js";
 import { createNewRoom, createNewPlayer } from "./../services/roomServices.js";
 import {
     chooseWord, createInitialGame, pickWords, publicRoom,
-    toScoring, guessPoints, drawerBonus, allGuessed, advanceTurn,
+    toScoring, guessPoints, drawerBonus, allGuessed, advanceTurn, revealHintLetter,
 } from "../game/skribbl.js";
+import { WORD_LISTS } from "../game/words.js";
 
 
 const roundTimers = new Map<string, NodeJS.Timeout>();
+// separate from the phase timer: fires the gradual letter reveals during drawing
+const hintTimers = new Map<string, NodeJS.Timeout>();
 
 function clearRoundTimer(roomId: string) {
     const t = roundTimers.get(roomId);
@@ -19,8 +22,42 @@ function clearRoundTimer(roomId: string) {
     }
 }
 
+function clearHintTimer(roomId: string) {
+    const t = hintTimers.get(roomId);
+    if (t) {
+        clearTimeout(t);
+        hintTimers.delete(roomId);
+    }
+}
+
+// Reveal `total` letters spread evenly across the drawing time. Re-schedules
+// itself after each reveal; stops when the phase ends or no letters remain.
+function scheduleHints(io: Server, roomStore: RoomStore, roomId: string, total: number, drawTimeMs: number) {
+    clearHintTimer(roomId);
+    if (total <= 0) return;
+    const interval = Math.max(1000, Math.floor(drawTimeMs / (total + 1)));
+    let revealed = 0;
+    const tick = async () => {
+        const room = await roomStore.getRoom(roomId);
+        if (!room || !room.game || room.game.phase !== "drawing") { clearHintTimer(roomId); return; }
+        const did = revealHintLetter(room.game);
+        if (did) {
+            await roomStore.saveRoom(room);
+            broadcastRoom(io, room);
+            revealed++;
+        }
+        if (did && revealed < total) {
+            hintTimers.set(roomId, setTimeout(tick, interval));
+        } else {
+            clearHintTimer(roomId);
+        }
+    };
+    hintTimers.set(roomId, setTimeout(tick, interval));
+}
+
 async function finishRound(io: Server, roomStore: RoomStore, roomId: string) {
     clearRoundTimer(roomId);
+    clearHintTimer(roomId);
     const room = await roomStore.getRoom(roomId);
     if (!room || !room.game || room.game.phase !== "drawing") return;
     room.game = toScoring(room.game);
@@ -55,7 +92,7 @@ async function advanceRound(io: Server, roomStore: RoomStore, roomId: string) {
 // for them if they run it out.
 async function offerWords(io: Server, roomStore: RoomStore, room: RoomState) {
     if (!room.game) return;
-    room.game.wordOptions = pickWords(room.settings.wordChoices);
+    room.game.wordOptions = pickWords(room.settings.wordChoices, room.settings);
     room.game.endsAt = Date.now() + CHOOSE_TIME_MS;
     await roomStore.saveRoom(room);
     broadcastRoom(io, room);
@@ -68,7 +105,7 @@ async function autoPickWord(io: Server, roomStore: RoomStore, roomId: string) {
     clearRoundTimer(roomId);
     const room = await roomStore.getRoom(roomId);
     if (!room || !room.game || room.game.phase !== "choosing") return;
-    const opts = room.game.wordOptions ?? pickWords(room.settings.wordChoices);
+    const opts = room.game.wordOptions ?? pickWords(room.settings.wordChoices, room.settings);
     const word = opts[Math.floor(Math.random() * opts.length)];
     await commitWord(io, roomStore, roomId, word);
 }
@@ -77,6 +114,7 @@ async function autoPickWord(io: Server, roomStore: RoomStore, roomId: string) {
 // draw clock. Shared by the choose_word handler and autoPickWord.
 async function commitWord(io: Server, roomStore: RoomStore, roomId: string, word: string) {
     clearRoundTimer(roomId);
+    clearHintTimer(roomId);
     const room = await roomStore.getRoom(roomId);
     if (!room || !room.game || room.game.phase !== "choosing") return;
     const now = Date.now();
@@ -85,6 +123,7 @@ async function commitWord(io: Server, roomStore: RoomStore, roomId: string, word
     broadcastRoom(io, room); // drawer keeps the real word, guessers get blanks
     const delay = Math.max(0, (room.game.endsAt ?? now) - now);
     roundTimers.set(roomId, setTimeout(() => finishRound(io, roomStore, roomId), delay));
+    scheduleHints(io, roomStore, roomId, room.settings.hints, room.settings.drawTimeMs);
 }
 
 // Clamp an incoming (untrusted) setting value into a sane range.
@@ -103,6 +142,9 @@ function broadcastRoom(io: Server, room: RoomState) {
 }
 
 export function registerRoomHandlers(io: Server, socket: Socket, roomStore: RoomStore) {
+    // tell the client which word lists exist per language (drives the lobby picker)
+    socket.emit("word_meta", WORD_LISTS);
+
     socket.on("create_room", async (data, callback) => {
         const hostPlayer: Player = createNewPlayer({
             id: data.id,
@@ -273,6 +315,14 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
         if (socket.data.playerId !== room.game.currentDrawerId) return; // only the drawer clears
         socket.to(roomId).emit("clear");
     });
+    socket.on("undo", async () => {
+        const roomId = socket.data.roomId;
+        if (!roomId) return;
+        const room = await roomStore.getRoom(roomId);
+        if (!room || !room.game) return;
+        if (socket.data.playerId !== room.game.currentDrawerId) return; // only the drawer undoes
+        socket.to(roomId).emit("undo");
+    });
     socket.on("send_message", async (data) => {
         const roomId = socket.data.roomId;
         if (!roomId) return;
@@ -339,6 +389,13 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
             drawTimeMs: clamp(s.drawTimeMs, 15_000, 300_000, room.settings.drawTimeMs),
             wordChoices: clamp(s.wordChoices, 1, 5, room.settings.wordChoices),
             maxPlayers: clamp(s.maxPlayers, 2, 20, room.settings.maxPlayers),
+            language: typeof s.language === "string" && WORD_LISTS[s.language] ? s.language : room.settings.language,
+            lists: Array.isArray(s.lists) ? s.lists.filter((x): x is string => typeof x === "string").slice(0, 50) : room.settings.lists,
+            customWords: Array.isArray(s.customWords)
+                ? s.customWords.filter((x): x is string => typeof x === "string" && x.trim().length > 0).map((x) => x.trim()).slice(0, 500)
+                : room.settings.customWords,
+            customWordsOnly: typeof s.customWordsOnly === "boolean" ? s.customWordsOnly : room.settings.customWordsOnly,
+            hints: clamp(s.hints, 0, 5, room.settings.hints),
         };
         await roomStore.saveRoom(room);
         broadcastRoom(io, room);

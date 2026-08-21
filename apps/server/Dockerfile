@@ -1,6 +1,4 @@
-# Socket.IO game server. Runs the TypeScript directly via tsx.
-# Build context is the REPO ROOT (so packages/shared is available):
-#   docker compose -f docker-compose.prod.yml build server
+
 FROM node:22-alpine
 WORKDIR /app/apps/server
 

@@ -39,14 +39,14 @@ export default function GameScreen({ room, myPlayerId, onChooseWord, socket, onL
                 : placeholder;
         }
         if (game!.phase === "drawing") {
-            return <DrawingBoard isDrawer={isDrawer} socket={socket} />;
+            return <DrawingBoard key={`${game!.currentDrawerId}-${game!.round}`} isDrawer={isDrawer} socket={socket} />;
         }
         if (game!.phase === "scoring") {
             return (
                 <div className="flex-1 min-w-0 grid place-items-center bg-card min-h-[320px] lg:min-h-[460px]" style={{ border: "3px solid var(--outline)", borderRadius: 6 }}>
                     <div className="text-center px-4">
                         <div className="font-mono uppercase text-ink/45 mb-2" style={{ fontWeight: 700, fontSize: 11, letterSpacing: ".16em" }}>The word was</div>
-                        <div className="font-loud text-ink mb-3" style={{ fontWeight: 800, fontSize: "clamp(34px, 9vw, 52px)" }}>{game!.word}</div>
+                        <div className="font-loud text-ink mb-3" dir="auto" style={{ fontWeight: 800, fontSize: "clamp(34px, 9vw, 52px)" }}>{game!.word}</div>
                         <div className="font-loud italic text-ink/50" style={{ fontWeight: 700, fontSize: 15 }}>next drawer coming up…</div>
                     </div>
                 </div>
@@ -62,6 +62,7 @@ export default function GameScreen({ room, myPlayerId, onChooseWord, socket, onL
                 isDrawer={isDrawer}
                 word={game.word}
                 wordLength={game.wordLength}
+                hint={game.hint}
                 round={game.round}
                 totalRounds={room.settings.rounds}
                 drawerName={drawerName}

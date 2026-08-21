@@ -18,6 +18,11 @@ export interface RoomSettings {
   drawTimeMs: number;      // time per drawing turn
   wordChoices: number;     // how many words the drawer picks from
   maxPlayers: number;      // cap on players in the room
+  language: string;        // which word files to use ("en" | "he")
+  lists: string[];         // enabled word lists ([] = all lists for the language)
+  customWords: string[];   // extra words added by the host
+  customWordsOnly: boolean; // draw ONLY from customWords
+  hints: number;           // letters gradually revealed to guessers (0 = off)
 }
 
 export interface RoomState {
@@ -52,6 +57,9 @@ export interface GameState {
   guessedIds: string[];       // players who've guessed correctly this turn
   drawnThisRound: string[];   // players who've already drawn in the current round
   wordOptions: string[] | null; // the choices offered to the drawer (redacted from others)
+  // per-letter reveal shown to guessers: "" = hidden, " " = space, else the letter.
+  // Only ever holds revealed letters (safe to broadcast); null outside "drawing".
+  hint: string[] | null;
 }
 
 export interface Point {
@@ -64,6 +72,7 @@ export interface DrawSegment{
   color:string;
   width:number;
   erase?:boolean;   // eraser stroke — receivers clear instead of paint
+  strokeId?:number; // groups segments of one pointer-down..up stroke (for undo)
 }
 export interface ChatMessage {
   author: string;

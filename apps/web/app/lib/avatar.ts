@@ -1,5 +1,4 @@
-// Deterministic initial-blob avatar helpers, shared everywhere avatars render
-// so the same name always gets the same colour + initials.
+
 export const BLOB_COLORS = [
   "oklch(0.70 0.15 315)", // magenta
   "oklch(0.68 0.13 200)", // cyan
@@ -14,9 +13,9 @@ export function initialsOf(name: string): string {
   return ((parts[0][0] ?? "") + (parts[1]?.[0] ?? "")).toUpperCase();
 }
 
-export function colorOf(name: string): string {
-  if (!name) return BLOB_COLORS[0];
+// `seed` lets the join screen "reroll" the blob colour without changing the name.
+export function colorOf(name: string, seed = 0): string {
   let h = 0;
   for (const c of name) h = (h * 31 + c.charCodeAt(0)) | 0;
-  return BLOB_COLORS[Math.abs(h) % BLOB_COLORS.length];
+  return BLOB_COLORS[Math.abs(h + seed) % BLOB_COLORS.length];
 }

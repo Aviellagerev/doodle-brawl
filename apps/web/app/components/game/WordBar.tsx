@@ -7,6 +7,7 @@ type Props = {
     isDrawer: boolean;
     word: string | null;
     wordLength: number | null;
+    hint: string[] | null;   // per-letter reveal for guessers ("" hidden, " " space, else letter)
     round: number;
     totalRounds: number;
     drawerName: string;
@@ -17,7 +18,7 @@ type Props = {
 
 const hardShadow = (x: number, y: number) => ({ boxShadow: `${x}px ${y}px 0 var(--outline)` });
 
-export default function WordBar({ phase, isDrawer, word, wordLength, round, totalRounds, drawerName, endsAt, totalMs, onLeave }: Props) {
+export default function WordBar({ phase, isDrawer, word, wordLength, hint, round, totalRounds, drawerName, endsAt, totalMs, onLeave }: Props) {
     const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
 
     // Live countdown for whatever phase is timed (choosing / drawing / scoring).
@@ -53,15 +54,17 @@ export default function WordBar({ phase, isDrawer, word, wordLength, round, tota
                     </div>
                     {isDrawer ? (
                         <span className="font-loud" style={{ fontWeight: 800, fontSize: "clamp(20px, 6vw, 34px)", letterSpacing: ".06em" }}>
-                            {word?.toUpperCase()}
+                            <span dir="auto">{word?.toUpperCase()}</span>
                             <span className="ml-3 font-bold text-ink/45" style={{ fontSize: 13 }}>{wordLength} letters</span>
                         </span>
                     ) : (
-                        <span className="inline-flex items-end gap-1.5 flex-wrap justify-center max-w-full">
-                            {Array.from({ length: wordLength ?? 0 }).map((_, i) => (
-                                <span key={i} className="font-loud text-center" style={{ fontSize: "clamp(20px, 6vw, 34px)", lineHeight: 1, width: "clamp(15px, 5vw, 24px)", borderBottom: "4px solid color-mix(in srgb, var(--ink) 30%, transparent)" }}>&nbsp;</span>
+                        <span className="inline-flex items-end gap-1.5 flex-wrap justify-center max-w-full" dir="auto">
+                            {(hint ?? Array.from({ length: wordLength ?? 0 }, () => "")).map((ch, i) => (
+                                ch === " "
+                                    ? <span key={i} style={{ width: "clamp(6px, 2vw, 12px)" }} />
+                                    : <span key={i} className="font-loud text-center text-ink" style={{ fontSize: "clamp(20px, 6vw, 34px)", lineHeight: 1, width: "clamp(15px, 5vw, 24px)", borderBottom: "4px solid color-mix(in srgb, var(--ink) 30%, transparent)" }}>{ch || " "}</span>
                             ))}
-                            <span className="ml-2 font-bold text-ink/45" style={{ fontSize: 12 }}>{wordLength} letters</span>
+                            <span className="ml-2 font-bold text-ink/45" style={{ fontSize: 12 }}>{hint ? hint.filter((c) => c !== " ").length : wordLength} letters</span>
                         </span>
                     )}
                 </div>
@@ -71,7 +74,7 @@ export default function WordBar({ phase, isDrawer, word, wordLength, round, tota
             return (
                 <span className="font-loud" style={{ fontWeight: 700, fontSize: 22 }}>
                     <span className="text-ink/55">The word was </span>
-                    <span className="text-orange" style={{ fontWeight: 800 }}>{word}</span>
+                    <span className="text-orange" dir="auto" style={{ fontWeight: 800 }}>{word}</span>
                 </span>
             );
         }

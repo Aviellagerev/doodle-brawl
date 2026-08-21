@@ -17,6 +17,7 @@ export default function Home() {
   const socketRef = useRef<Socket | null>(null);
   const [playerId, setPlayerId] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [wordLists, setWordLists] = useState<Record<string, string[]>>({});
   const addLog = (line: string) => {
     setLog((prev) => [...prev, `[${new Date().toLocaleTimeString([], { hour12: false })}] ${line}`]);
   };
@@ -57,6 +58,7 @@ export default function Home() {
     socket.on("system_message", (msg: string) => addLog(msg));
 
     socket.on("chat_message", (m: ChatMessage) => setMessages((prev) => [...prev, m]));
+    socket.on("word_meta", (m: Record<string, string[]>) => setWordLists(m));
     return () => {
       socket.disconnect();
     };
@@ -140,7 +142,7 @@ export default function Home() {
     // level 2: in a room — pick the screen for the current phase
     switch (roomState.status) {
       case "waiting":
-        return <Lobby room={roomState} isHost={isHost} onLeave={handleLeave} onStart={handleStart} onUpdateSettings={handleUpdateSettings} />;
+        return <Lobby room={roomState} isHost={isHost} wordLists={wordLists} onLeave={handleLeave} onStart={handleStart} onUpdateSettings={handleUpdateSettings} />;
       case "playing":
         return <GameScreen room={roomState} myPlayerId={playerId} onChooseWord={handleChooseWord} socket={socketRef.current} onLeave={handleLeave} />;
       case "finished":

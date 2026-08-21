@@ -46,7 +46,7 @@ export default function Chat({ messages, onSend }: Props) {
           if (m.kind === "chat") {
             return (
               <div key={i}>
-                <b style={{ color: colorOf(m.author), fontWeight: 700 }}>{m.author}</b> {m.text}
+                <b style={{ color: colorOf(m.author), fontWeight: 700 }}>{m.author}</b> <span dir="auto">{m.text}</span>
               </div>
             );
           }
@@ -69,6 +69,7 @@ export default function Chat({ messages, onSend }: Props) {
       <form onSubmit={submit} className="mt-3 flex gap-2">
         <input
           value={draft}
+          dir="auto"
           onChange={(e) => setDraft(e.target.value)}
           placeholder="say something…"
           className="flex-1 min-w-0 paper-bg text-ink outline-none placeholder:text-ink/35"
