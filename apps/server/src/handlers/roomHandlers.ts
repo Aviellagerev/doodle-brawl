@@ -1,7 +1,7 @@
 import { Server, Socket } from "socket.io";
 import { RoomStore } from "../roomStore.js";
-import { DrawSegment, DrawOp, ChatMessage } from "../../../../packages/shared/index.js";
-import { RoomState, Player, RoomSettings, CHOOSE_TIME_MS, SCORING_DELAY_MS } from "../../../../packages/shared/index.js";
+import { DrawSegment, DrawOp, ChatMessage, PayoutEntry } from "../../../../packages/shared/index.js";
+import { RoomState, Player, RoomSettings, GameState, CHOOSE_TIME_MS, SCORING_DELAY_MS } from "../../../../packages/shared/index.js";
 import { createNewRoom, createNewPlayer } from "./../services/roomServices.js";
 import {
     chooseWord, createInitialGame, pickWords, publicRoom,
@@ -57,11 +57,36 @@ function scheduleHints(io: Server, roomStore: RoomStore, roomId: string, total: 
     hintTimers.set(roomId, setTimeout(tick, interval));
 }
 
+// Close out the current turn's payout: append the drawer's total bonus, then a
+// "ran out of time" line for every non-drawer who never guessed. The guesser
+// lines are already present (pushed as they guessed), so payout ends up ordered
+// guessers-first, then the drawer, then the players who missed.
+function finalizePayout(game: GameState, players: Player[]) {
+    const payout: PayoutEntry[] = game.payout ?? (game.payout = []);
+    const drawerId = game.currentDrawerId;
+    const guessers = game.guessedIds;
+    const drawerBonusTotal = payout
+        .filter((e) => guessers.includes(e.playerId))
+        .reduce((sum, e) => sum + drawerBonus(e.points), 0);
+    const n = guessers.length;
+    payout.push({
+        playerId: drawerId,
+        points: n === 0 ? 0 : drawerBonusTotal,
+        note: n === 0 ? "nobody guessed" : `drawer bonus · ${n} guessed`,
+    });
+    for (const p of players) {
+        if (p.id === drawerId) continue;
+        if (guessers.includes(p.id)) continue;
+        payout.push({ playerId: p.id, points: 0, note: "ran out of time" });
+    }
+}
+
 async function finishRound(io: Server, roomStore: RoomStore, roomId: string) {
     clearRoundTimer(roomId);
     clearHintTimer(roomId);
     const room = await roomStore.getRoom(roomId);
     if (!room || !room.game || room.game.phase !== "drawing") return;
+    finalizePayout(room.game, room.players);
     room.game = toScoring(room.game);
     room.game.endsAt = Date.now() + SCORING_DELAY_MS;   // deadline for the scoreboard countdown
     await roomStore.saveRoom(room);
@@ -303,8 +328,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
         }
     })
 
-    // Drawer swaps out the three offered words for a fresh set. Does NOT reset the
-    // choose clock; capped at rerollsLeft (starts at 2 each choosing turn).
+
     socket.on("reroll_words", async () => {
         const roomId = socket.data.roomId;
         if (!roomId) return;
@@ -392,6 +416,13 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
                 player.score = (player.score ?? 0) + pts;
                 const drawer = room.players.find((p) => p.id === game.currentDrawerId);
                 if (drawer) drawer.score = (drawer.score ?? 0) + drawerBonus(pts);
+                // record this guesser's payout line (first correct guesser is flagged)
+                const isFirst = game.guessedIds.length === 0;
+                (game.payout ??= []).push({
+                    playerId: player.id,
+                    points: pts,
+                    note: isFirst ? "first to guess" : "guessed it",
+                });
                 game.guessedIds.push(player.id);
 
                 // petty-awards stats: fastest correct guess + guessers earned by the drawer
@@ -413,8 +444,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
                 }
                 return;
             }
-            // a real (wrong) guess from an eligible guesser → tally it for MOST WRONG.
-            // The drawer's own chatter and already-correct players don't count.
+  
             if (!isDrawer && !already) {
                 const stats = (room.stats ??= { guessMs: {}, wrong: {}, doodle: {} });
                 stats.wrong[player.id] = (stats.wrong[player.id] ?? 0) + 1;
@@ -423,7 +453,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
             }
         }
 
-        // --- normal chat ---
+     
         const message: ChatMessage = { author: player.name, text, kind: "chat" };
         io.to(roomId).emit("chat_message", message);   // io.to = everyone INCLUDING sender
     });

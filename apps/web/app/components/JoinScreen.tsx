@@ -9,9 +9,10 @@ type JoinScreenProps = {
   onJoin: (name: string, code: string) => void;
   playerCount?: number | null;   // live count of players currently in rooms
   joinError?: string | null;     // server-side error to show inline (e.g. "room not found"); cleared by the parent
+  inviteCode?: string | null;    // set from a ?room=CODE invite link → compact join-by-invite mode
 };
 
-export default function JoinScreen({ onCreate, onJoin, playerCount, joinError }: JoinScreenProps) {
+export default function JoinScreen({ onCreate, onJoin, playerCount, joinError, inviteCode }: JoinScreenProps) {
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
   const [blob, setBlob] = useState(0);      // reroll counter for the avatar colour
@@ -30,6 +31,9 @@ export default function JoinScreen({ onCreate, onJoin, playerCount, joinError }:
   };
   const tryJoin = () => { if (requireName()) onJoin(name, code); };
   const tryCreate = () => { if (requireName()) onCreate(name); };
+  // invite mode: name is the only field; the room code comes from the invite link.
+  const invite = !!inviteCode;
+  const tryInviteJoin = () => { if (inviteCode && requireName()) onJoin(name, inviteCode); };
 
   return (
     <div className="relative min-h-screen flex items-center justify-center gap-8 sm:gap-14 flex-wrap p-5 sm:p-10">
@@ -86,6 +90,19 @@ export default function JoinScreen({ onCreate, onJoin, playerCount, joinError }:
           style={{ top: -15, left: "50%", transform: "translateX(-50%) rotate(-2deg)", width: 118, height: 30 }}
         />
 
+        {/* invite mode heading — the room code came from the link, so we only ask for a name */}
+        {invite && (
+          <div style={{ margin: "8px 0 4px" }}>
+            <span className="font-mono uppercase text-ink/45 block mb-1" style={{ fontWeight: 700, fontSize: 10.5, letterSpacing: ".12em" }}>
+              You're invited
+            </span>
+            <h3 className="font-loud m-0" style={{ fontWeight: 800, fontSize: 26, lineHeight: 1.1 }}>
+              Join room{" "}
+              <span dir="auto" className="text-orange" style={{ letterSpacing: ".08em" }}>{inviteCode}</span>
+            </h3>
+          </div>
+        )}
+
         {/* name + avatar */}
         <div className="flex gap-4 items-center" style={{ margin: "12px 0 18px" }}>
           <div className="relative flex-none">
@@ -126,17 +143,21 @@ export default function JoinScreen({ onCreate, onJoin, playerCount, joinError }:
           </div>
         </div>
 
-        {/* room code */}
-        <label className="block mb-1.5 font-mono uppercase text-ink/45" style={{ fontWeight: 700, fontSize: 10.5, letterSpacing: ".12em" }}>
-          Room code
-        </label>
-        <input
-          value={code}
-          onChange={(e) => setCode(e.target.value.toUpperCase())}
-          placeholder="PLZ-4NT"
-          className="font-loud w-full box-border outline-none paper-bg text-ink border-[2.5px] border-dashed border-ink/35 placeholder:text-ink/30 mb-5"
-          style={{ borderRadius: 14, padding: "13px 15px", fontWeight: 700, fontSize: 19, letterSpacing: ".2em" }}
-        />
+        {/* room code — hidden in invite mode (the code comes from the link) */}
+        {!invite && (
+          <>
+            <label className="block mb-1.5 font-mono uppercase text-ink/45" style={{ fontWeight: 700, fontSize: 10.5, letterSpacing: ".12em" }}>
+              Room code
+            </label>
+            <input
+              value={code}
+              onChange={(e) => setCode(e.target.value.toUpperCase())}
+              placeholder="PLZ-4NT"
+              className="font-loud w-full box-border outline-none paper-bg text-ink border-[2.5px] border-dashed border-ink/35 placeholder:text-ink/30 mb-5"
+              style={{ borderRadius: 14, padding: "13px 15px", fontWeight: 700, fontSize: 19, letterSpacing: ".2em" }}
+            />
+          </>
+        )}
 
         {/* server-side error (e.g. room not found), shown inline above the actions */}
         {joinError && (
@@ -148,21 +169,35 @@ export default function JoinScreen({ onCreate, onJoin, playerCount, joinError }:
           </div>
         )}
 
-        {/* actions: join the entered code, or make a fresh room */}
-        <button
-          onClick={tryJoin}
-          className="font-loud w-full mb-3 text-card cursor-pointer bg-orange"
-          style={{ border: "3px solid var(--outline)", borderRadius: "34px 30px 34px 28px", padding: "18px 0", fontWeight: 800, fontSize: 27, ...hardShadow(5, 6) }}
-        >
-          Play now!
-        </button>
-        <button
-          onClick={tryCreate}
-          className="font-loud w-full text-ink cursor-pointer bg-card"
-          style={{ border: "3px solid var(--outline)", borderRadius: "30px 34px 28px 34px", padding: "13px 0", fontWeight: 700, fontSize: 17, ...hardShadow(5, 6) }}
-        >
-          Make a room
-        </button>
+        {/* actions */}
+        {invite ? (
+          // invite mode: a single primary button that joins the linked room
+          <button
+            onClick={tryInviteJoin}
+            className="font-loud w-full text-card cursor-pointer bg-orange"
+            style={{ border: "3px solid var(--outline)", borderRadius: "34px 30px 34px 28px", padding: "18px 0", fontWeight: 800, fontSize: 24, ...hardShadow(5, 6) }}
+          >
+            Join <span dir="auto">{inviteCode}</span>
+          </button>
+        ) : (
+          // normal mode: join the entered code, or make a fresh room
+          <>
+            <button
+              onClick={tryJoin}
+              className="font-loud w-full mb-3 text-card cursor-pointer bg-orange"
+              style={{ border: "3px solid var(--outline)", borderRadius: "34px 30px 34px 28px", padding: "18px 0", fontWeight: 800, fontSize: 27, ...hardShadow(5, 6) }}
+            >
+              Play now!
+            </button>
+            <button
+              onClick={tryCreate}
+              className="font-loud w-full text-ink cursor-pointer bg-card"
+              style={{ border: "3px solid var(--outline)", borderRadius: "30px 34px 28px 34px", padding: "13px 0", fontWeight: 700, fontSize: 17, ...hardShadow(5, 6) }}
+            >
+              Make a room
+            </button>
+          </>
+        )}
       </div>
 
       {showHelp && (

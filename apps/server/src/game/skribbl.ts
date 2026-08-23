@@ -5,7 +5,7 @@ import {
 } from "../../../../packages/shared/index.js";
 import { WORD_BANK, difficultyForList } from "./words.js";
 
-// Build a WordOption from a raw word + difficulty (points derived from tier).
+
 function makeOption(word: string, difficulty: Difficulty): WordOption {
   return { word, difficulty, points: DIFFICULTY_POINTS[difficulty] };
 }
@@ -36,10 +36,7 @@ export function canAdvance(from: GamePhase, to: GamePhase): boolean {
   return PHASE_TRANSITIONS[from].includes(to);
 }
 
-// --- Word selection ----------------------------------------------------------
-// Filters the loaded word bank by the room's language + enabled lists (and/or
-// custom words), then returns `count` distinct random words. Falls back safely
-// so a game can never stall on an empty pool.
+
 export function pickWords(count: number, settings: RoomSettings): WordOption[] {
   const custom = settings.customWords.map((w) => w.trim()).filter(Boolean);
 
@@ -83,6 +80,7 @@ function choosingTurn(drawerId: string, round: number, drawnThisRound: string[])
     wordPoints: null,
     rerollsLeft: 2,
     hint: null,
+    payout: null,
   };
 }
 
@@ -136,6 +134,7 @@ export function chooseWord(game: GameState, word: string, now: number, drawTimeM
     wordDifficulty: difficulty,
     wordPoints: points,
     hint: initialHint(word),
+    payout: [],   // fresh per-turn score breakdown; filled as players guess
   };
 }
 

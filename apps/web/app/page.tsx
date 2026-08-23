@@ -26,6 +26,8 @@ export default function Home() {
   // dropped connection while in a room → the reconnect overlay
   const [disconnected, setDisconnected] = useState(false);
   const [reconnectSeconds, setReconnectSeconds] = useState(30);
+  // room code pulled from an invite link (?room=CODE) → JoinScreen's compact invite mode
+  const [inviteCode, setInviteCode] = useState<string | null>(null);
 
   const addLog = (line: string) => {
     setLog((prev) => [...prev, `[${new Date().toLocaleTimeString([], { hour12: false })}] ${line}`]);
@@ -47,6 +49,12 @@ export default function Home() {
   // keep a ref of the room so the (once-bound) socket handlers can read it
   useEffect(() => { roomStateRef.current = roomState; }, [roomState]);
 
+  // invite link: ?room=CODE on first load → drop straight into join-by-invite mode
+  useEffect(() => {
+    const code = new URLSearchParams(window.location.search).get("room");
+    if (code) setInviteCode(code.toUpperCase());
+  }, []);
+
   useEffect(() => {
     const socket = io(process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:3001");
     socketRef.current = socket;
@@ -57,8 +65,7 @@ export default function Home() {
       addLog(`connected with id ${socket.id}`);
       const rs = roomStateRef.current;
       if (rs) {
-        // socket dropped while we were in a room — rejoin with the stored ids so the
-        // server re-binds our new socket to the same player, then drop the overlay.
+
         const me = rs.players.find((p) => p.id === getPermanentPlayerId());
         socket.emit("join_room", { id: getPermanentPlayerId(), name: me?.name ?? "Player", code: rs.roomId }, (res: RoomResponse) => {
           if (res.success && res.room) setRoomState(res.room);
@@ -145,6 +152,9 @@ export default function Home() {
         setJoinFail(null);
         setRoomState(res.room ?? null)
         setStatus(`Rooms ID: ${res.roomId}`);
+        // clean the invite param so a refresh doesn't re-trigger the invite flow
+        setInviteCode(null);
+        window.history.replaceState({}, "", window.location.pathname);
       } else {
         // route the server error to the matching full-frame state screen
         const msg = typeof res.error === "string" ? res.error.toLowerCase() : "";
@@ -189,13 +199,12 @@ export default function Home() {
           </div>
         );
       }
-      return <JoinScreen onCreate={handleCreate} onJoin={handleJoin} playerCount={playerCount} />;
+      return <JoinScreen onCreate={handleCreate} onJoin={handleJoin} playerCount={playerCount} inviteCode={inviteCode} />;
     }
 
     const isHost = roomState.players.find((p) => p.isHost)?.id === playerId;
 
-    // the in-game screen owns its own full layout (including the guess feed) so the
-    // word and chat stay co-visible on mobile.
+
     if (roomState.status === "playing") {
       return (
         <GameScreen

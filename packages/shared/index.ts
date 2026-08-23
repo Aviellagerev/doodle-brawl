@@ -79,6 +79,14 @@ export interface WordOption {
   points: number;   // display points for this difficulty (DIFFICULTY_POINTS[difficulty])
 }
 
+// One line on the "Round N payout" scoring screen: a player, the points they
+// earned this turn, and a human-readable reason. Safe to broadcast to everyone.
+export interface PayoutEntry {
+  playerId: string;
+  points: number;
+  note: string;
+}
+
 export interface GameState {
   currentDrawerId: string;
   round: number;
@@ -95,6 +103,10 @@ export interface GameState {
   // per-letter reveal shown to guessers: "" = hidden, " " = space, else the letter.
   // Only ever holds revealed letters (safe to broadcast); null outside "drawing".
   hint: string[] | null;
+  // Per-turn score breakdown for the "Round N payout" scoring screen.
+  // null during "choosing"; [] once "drawing" starts, filled as players guess;
+  // finalized (drawer bonus + missed players appended) when the turn ends.
+  payout: PayoutEntry[] | null;
 }
 
 export interface Point {

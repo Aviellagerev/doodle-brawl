@@ -6,12 +6,10 @@ import { colorOf } from "../../lib/avatar";
 type Props = {
   messages: ChatMessage[];
   onSend: (text: string) => void;
-  // "sidebar" (default): fixed-height card that sits beside the lobby / game-over.
-  // "fill": fills the remaining height of a flex column (the mobile game shell) and
-  // becomes the 284px desktop guess column. Input stays pinned at the bottom either way.
+
   variant?: "sidebar" | "fill";
   title?: string;               // mono-caps header label (default "Chat")
-  // The drawer can't guess — swap the input for a dashed "no typing" note (game shell).
+  
   inputDisabled?: boolean;
   disabledNote?: string;
 };
@@ -44,10 +42,13 @@ export default function Chat({ messages, onSend, variant = "sidebar", title = "C
   }
 
   // outer sizing differs by variant; the inner flex column is identical.
+  // fill (in-game): mobile fills the remaining column height, desktop self-stretches
+  //   to the viewport-bounded game row so the pinned input is always on screen.
+  // sidebar (lobby / game-over): capped to the viewport so the input stays reachable.
   const outer =
     variant === "fill"
-      ? "order-3 w-full flex-1 min-h-0 lg:order-3 lg:flex-none lg:w-[284px] lg:h-[620px]"
-      : "w-full lg:w-[284px] flex-none h-[46vh] lg:h-[620px]";
+      ? "order-3 w-full flex-1 min-h-0 lg:order-3 lg:flex-none lg:w-[284px] lg:self-stretch"
+      : "w-full lg:w-[284px] flex-none h-[46vh] lg:h-[620px] lg:max-h-[calc(100dvh_-_2rem)]";
 
   return (
     <div
