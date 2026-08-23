@@ -18,6 +18,7 @@ export default function Home() {
   const [playerId, setPlayerId] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [wordLists, setWordLists] = useState<Record<string, string[]>>({});
+  const [playerCount, setPlayerCount] = useState<number | null>(null);
   const addLog = (line: string) => {
     setLog((prev) => [...prev, `[${new Date().toLocaleTimeString([], { hour12: false })}] ${line}`]);
   };
@@ -59,6 +60,7 @@ export default function Home() {
 
     socket.on("chat_message", (m: ChatMessage) => setMessages((prev) => [...prev, m]));
     socket.on("word_meta", (m: Record<string, string[]>) => setWordLists(m));
+    socket.on("player_count", (n: number) => setPlayerCount(n));
     return () => {
       socket.disconnect();
     };
@@ -134,7 +136,7 @@ export default function Home() {
   function renderScreen() {
     // level 1: not in a room yet
     if (roomState === null) {
-      return <JoinScreen onCreate={handleCreate} onJoin={handleJoin} />;
+      return <JoinScreen onCreate={handleCreate} onJoin={handleJoin} playerCount={playerCount} />;
     }
 
     const isHost = roomState.players.find((p) => p.isHost)?.id === playerId;

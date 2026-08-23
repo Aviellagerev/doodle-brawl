@@ -8,6 +8,7 @@ import {
     toScoring, guessPoints, drawerBonus, allGuessed, advanceTurn, revealHintLetter,
 } from "../game/skribbl.js";
 import { WORD_LISTS } from "../game/words.js";
+import { broadcastPlayerCount } from "../observability.js";
 
 
 const roundTimers = new Map<string, NodeJS.Timeout>();
@@ -144,6 +145,8 @@ function broadcastRoom(io: Server, room: RoomState) {
 export function registerRoomHandlers(io: Server, socket: Socket, roomStore: RoomStore) {
     // tell the client which word lists exist per language (drives the lobby picker)
     socket.emit("word_meta", WORD_LISTS);
+    // seed the newcomer with the current live player count (for the join screen)
+    roomStore.countPlayers().then((n) => socket.emit("player_count", n)).catch(() => { });
 
     socket.on("create_room", async (data, callback) => {
         const hostPlayer: Player = createNewPlayer({
@@ -162,6 +165,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
             socket.data.roomId = newRoom.roomId;
             socket.data.playerId = hostPlayer.id;
             broadcastRoom(io, newRoom);
+            broadcastPlayerCount(io, roomStore);
             console.log(`Room ${newRoom.roomId} created by ${hostPlayer.name}`);
 
             callback({ success: true, roomId: newRoom.roomId, room: newRoom });
@@ -200,6 +204,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
                 socket.data.playerId = newPlayer.id;
                 console.log(`user: ${newPlayer.name} joined id: ${newPlayer.id}`);
                 broadcastRoom(io, room);
+                broadcastPlayerCount(io, roomStore);
                 io.to(roomId).emit("chat_message", { author: "System", text: `${newPlayer.name} joined the room`, kind: "system" } as ChatMessage);
                 callback({ success: true, roomId: roomId, room });
             }
@@ -227,6 +232,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
                 broadcastRoom(io, room);
                 io.to(room.roomId).emit("chat_message", { author: "System", text: `${removed?.name ?? "A player"} left the room`, kind: "system" } as ChatMessage);
             }
+            broadcastPlayerCount(io, roomStore);
             callback({ success: true });
         } catch (error) {
             console.error(`Failed to leave room ${data.roomId}:`, error);
@@ -244,6 +250,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
                 broadcastRoom(io, room);
                 io.to(roomId).emit("chat_message", { author: "System", text: `${removed?.name ?? "A player"} left the room`, kind: "system" } as ChatMessage);
             }
+            broadcastPlayerCount(io, roomStore);
         } catch (error) {
             console.error(`Disconnect cleanup failed for room ${roomId}:`, error);
         }

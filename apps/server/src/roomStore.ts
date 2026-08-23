@@ -55,6 +55,25 @@ export class RoomStore {
   async deleteRoom(roomId: string): Promise<void> {
     await this.redis.del(`room:${roomId}`);
   }
+
+  // Total players currently across all rooms — powers the live "playing now"
+  // count. SCAN (not KEYS) so it never blocks Redis on large keyspaces.
+  async countPlayers(): Promise<number> {
+    let cursor = "0";
+    let total = 0;
+    do {
+      const [next, keys] = await this.redis.scan(cursor, "MATCH", "room:*", "COUNT", 200);
+      cursor = next;
+      if (keys.length) {
+        const vals = await this.redis.mget(keys);
+        for (const v of vals) {
+          if (!v) continue;
+          try { total += (JSON.parse(v) as RoomState).players.length; } catch { /* skip bad json */ }
+        }
+      }
+    } while (cursor !== "0");
+    return total;
+  }
   async getHost(roomId: string): Promise<Player | null> {
     const room = await this.getRoom(roomId);
     if(!room) return null;

@@ -4,6 +4,7 @@ import { RoomStore } from "./roomStore.js"
 import { redis } from "./redis.js";
 import { registerRoomHandlers } from "./handlers/roomHandlers.js"
 import { config } from "./config.js";
+import { installSocketGuard, broadcastPlayerCount } from "./observability.js";
 const roomStore = new RoomStore(redis);
 const app = Fastify({ logger: true });
 app.get("/health", async () => ({ ok: true }));
@@ -16,10 +17,13 @@ const start = async () => {
     });
 
     io.on("connection", (socket) => {
-        console.log("connected");
+        installSocketGuard(socket, app.log);      // structured logging + rate limiting
         registerRoomHandlers(io, socket, roomStore);
-
     });
+
+    // heartbeat: refresh the live player count for everyone every 30s, so it
+    // stays accurate even after room expiries the event hooks don't observe.
+    setInterval(() => broadcastPlayerCount(io, roomStore, app.log), 30_000);
 };
 start();
 

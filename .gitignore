@@ -48,4 +48,7 @@ Thumbs.db
 *.pid
 *.seed
 *.pem
+# Deploy/infra reference — kept local only, managed by hand on the VPS
 deploy/DEPLOY.md
+deploy/Caddyfile
+deploy/HARDENING.md

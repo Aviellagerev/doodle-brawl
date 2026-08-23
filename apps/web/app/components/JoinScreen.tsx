@@ -7,9 +7,10 @@ import { initialsOf, colorOf } from "../lib/avatar";
 type JoinScreenProps = {
   onCreate: (name: string) => void;
   onJoin: (name: string, code: string) => void;
+  playerCount?: number | null;   // live count of players currently in rooms
 };
 
-export default function JoinScreen({ onCreate, onJoin }: JoinScreenProps) {
+export default function JoinScreen({ onCreate, onJoin, playerCount }: JoinScreenProps) {
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
   const [blob, setBlob] = useState(0);      // reroll counter for the avatar colour
@@ -51,7 +52,7 @@ export default function JoinScreen({ onCreate, onJoin }: JoinScreenProps) {
             className="bg-lime text-ink px-3 py-1.5 font-bold text-xs"
             style={{ border: "2.5px solid var(--outline)", borderRadius: 11, ...hardShadow(3, 3), transform: "rotate(-1.5deg)" }}
           >
-            1,204 playing now
+            {playerCount == null ? "…" : playerCount.toLocaleString()} playing now
           </span>
           <span
             className="bg-card text-ink px-3 py-1.5 font-bold text-xs"
