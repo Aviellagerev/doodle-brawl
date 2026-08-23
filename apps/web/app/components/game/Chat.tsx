@@ -3,9 +3,20 @@ import { useEffect, useRef, useState } from "react";
 import { ChatMessage } from "../../../../../packages/shared";
 import { colorOf } from "../../lib/avatar";
 
-type Props = { messages: ChatMessage[]; onSend: (text: string) => void };
+type Props = {
+  messages: ChatMessage[];
+  onSend: (text: string) => void;
+  // "sidebar" (default): fixed-height card that sits beside the lobby / game-over.
+  // "fill": fills the remaining height of a flex column (the mobile game shell) and
+  // becomes the 284px desktop guess column. Input stays pinned at the bottom either way.
+  variant?: "sidebar" | "fill";
+  title?: string;               // mono-caps header label (default "Chat")
+  // The drawer can't guess — swap the input for a dashed "no typing" note (game shell).
+  inputDisabled?: boolean;
+  disabledNote?: string;
+};
 
-export default function Chat({ messages, onSend }: Props) {
+export default function Chat({ messages, onSend, variant = "sidebar", title = "Chat", inputDisabled = false, disabledNote = "no typing — you know the word" }: Props) {
   const [draft, setDraft] = useState("");
   const listRef = useRef<HTMLDivElement | null>(null);
   const atBottomRef = useRef(true);
@@ -32,13 +43,19 @@ export default function Chat({ messages, onSend }: Props) {
     setDraft("");
   }
 
+  // outer sizing differs by variant; the inner flex column is identical.
+  const outer =
+    variant === "fill"
+      ? "order-3 w-full flex-1 min-h-0 lg:order-3 lg:flex-none lg:w-[284px] lg:h-[620px]"
+      : "w-full lg:w-[284px] flex-none h-[46vh] lg:h-[620px]";
+
   return (
     <div
-      className="w-full lg:w-[284px] flex-none bg-card flex flex-col h-[46vh] lg:h-[620px]"
+      className={`${outer} bg-card flex flex-col`}
       style={{ borderRadius: "18px 8px 18px 8px", boxShadow: "0 8px 20px rgba(58,47,38,.12)", padding: 14 }}
     >
       <div className="font-mono uppercase text-ink/45 mb-3" style={{ fontWeight: 700, fontSize: 10, letterSpacing: ".12em" }}>
-        Chat
+        {title}
       </div>
 
       <div ref={listRef} onScroll={onScroll} className="flex-1 min-h-0 flex flex-col gap-2 overflow-y-auto" style={{ fontSize: 12.5, lineHeight: 1.4 }}>
@@ -66,23 +83,32 @@ export default function Chat({ messages, onSend }: Props) {
         })}
       </div>
 
-      <form onSubmit={submit} className="mt-3 flex gap-2">
-        <input
-          value={draft}
-          dir="auto"
-          onChange={(e) => setDraft(e.target.value)}
-          placeholder="say something…"
-          className="flex-1 min-w-0 paper-bg text-ink outline-none placeholder:text-ink/35"
-          style={{ border: "2.5px dashed color-mix(in srgb, var(--ink) 30%, transparent)", borderRadius: 12, padding: "9px 12px", fontSize: 12.5 }}
-        />
-        <button
-          type="submit"
-          className="font-bold text-card cursor-pointer bg-cyan"
-          style={{ border: "2.5px solid var(--outline)", borderRadius: 12, boxShadow: "2.5px 2.5px 0 var(--outline)", padding: "0 13px", fontSize: 12 }}
+      {inputDisabled ? (
+        <div
+          className="mt-3 paper-bg font-loud italic text-ink/40"
+          style={{ border: "2.5px dashed color-mix(in srgb, var(--ink) 30%, transparent)", borderRadius: 12, padding: "11px 13px", fontSize: 12, fontWeight: 600 }}
         >
-          Send
-        </button>
-      </form>
+          {disabledNote}
+        </div>
+      ) : (
+        <form onSubmit={submit} className="mt-3 flex gap-2">
+          <input
+            value={draft}
+            dir="auto"
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder="say something…"
+            className="flex-1 min-w-0 paper-bg text-ink outline-none placeholder:text-ink/35"
+            style={{ border: "2.5px dashed color-mix(in srgb, var(--ink) 30%, transparent)", borderRadius: 12, padding: "9px 12px", fontSize: 12.5 }}
+          />
+          <button
+            type="submit"
+            className="font-bold text-card cursor-pointer bg-cyan"
+            style={{ border: "2.5px solid var(--outline)", borderRadius: 12, boxShadow: "2.5px 2.5px 0 var(--outline)", padding: "0 13px", fontSize: 12 }}
+          >
+            Send
+          </button>
+        </form>
+      )}
     </div>
   );
 }

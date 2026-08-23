@@ -32,6 +32,13 @@ export interface RoomState {
   status: RoomStatus;
   settings: RoomSettings;
   game?: GameState;
+  // Raw per-game tallies for the game-over "petty awards" (computed on the client).
+  // Keyed by player id. Reset to empty maps at the start of each game.
+  stats?: {
+    guessMs: Record<string, number>;  // player's FASTEST correct-guess time in ms (smaller = better)
+    wrong: Record<string, number>;    // count of that player's incorrect guesses across the game
+    doodle: Record<string, number>;   // total correct guessers that drawer earned across the game
+  };
 }
 
 export interface RoomResponse {
@@ -47,6 +54,31 @@ export type GamePhase = "choosing" | "drawing" | "scoring" | "done";
 export const CHOOSE_TIME_MS = 15_000;   // drawer has 15s to pick, then auto-pick
 export const SCORING_DELAY_MS = 5_000;  // scoreboard shows for 5s before advancing
 
+// Word difficulty tiers. Each tier carries a fixed display point value and a
+// scoring multiplier applied to the time-based guess points.
+export type Difficulty = "easy" | "normal" | "hard";
+
+// Base display points shown on the word-picker cards, keyed by difficulty.
+export const DIFFICULTY_POINTS: Record<Difficulty, number> = {
+  easy: 100,
+  normal: 200,
+  hard: 300,
+};
+
+// Multiplier applied to the time-based guess points, keyed by difficulty.
+export const DIFFICULTY_MULTIPLIER: Record<Difficulty, number> = {
+  easy: 0.75,
+  normal: 1,
+  hard: 1.5,
+};
+
+// One choice offered to the drawer in the "choosing" phase.
+export interface WordOption {
+  word: string;
+  difficulty: Difficulty;
+  points: number;   // display points for this difficulty (DIFFICULTY_POINTS[difficulty])
+}
+
 export interface GameState {
   currentDrawerId: string;
   round: number;
@@ -56,7 +88,10 @@ export interface GameState {
   endsAt: number | null;      // epoch ms when the CURRENT phase ends (choosing/drawing/scoring)
   guessedIds: string[];       // players who've guessed correctly this turn
   drawnThisRound: string[];   // players who've already drawn in the current round
-  wordOptions: string[] | null; // the choices offered to the drawer (redacted from others)
+  wordOptions: WordOption[] | null; // the choices offered to the drawer (redacted from others)
+  wordDifficulty: Difficulty | null; // difficulty of the CHOSEN word (null until chosen)
+  wordPoints: number | null;         // display points of the CHOSEN word (null until chosen)
+  rerollsLeft: number;               // reroll_words uses left this choosing turn (starts at 2)
   // per-letter reveal shown to guessers: "" = hidden, " " = space, else the letter.
   // Only ever holds revealed letters (safe to broadcast); null outside "drawing".
   hint: string[] | null;
@@ -73,6 +108,17 @@ export interface DrawSegment{
   width:number;
   erase?:boolean;   // eraser stroke — receivers clear instead of paint
   strokeId?:number; // groups segments of one pointer-down..up stroke (for undo)
+}
+// A single committed shape/fill operation from the drawer's tools (line/rect/
+// ellipse/fill). Relayed drawer→room like DrawSegment. For "fill", `from` is the
+// seed point (`to` is unused).
+export interface DrawOp {
+  kind: "line" | "rect" | "ellipse" | "fill";
+  from: Point;
+  to: Point;
+  color: string;
+  width: number;
+  strokeId?: number;   // groups this op with the current stroke (for undo)
 }
 export interface ChatMessage {
   author: string;

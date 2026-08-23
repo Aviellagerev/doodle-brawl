@@ -4,6 +4,16 @@
 import { readFileSync, readdirSync } from "fs";
 import { fileURLToPath } from "url";
 import path from "path";
+import { Difficulty } from "../../../../packages/shared/index.js";
+
+// Map a word-list name to a difficulty tier. Only the explicit tier lists carry
+// non-normal difficulty; every topic list (animals/food/politics/...) is normal.
+export function difficultyForList(list: string): Difficulty {
+  if (list === "easy") return "easy";
+  if (list === "hard") return "hard";
+  // "medium" and all topic lists → normal
+  return "normal";
+}
 
 export interface WordEntry {
   word: string;

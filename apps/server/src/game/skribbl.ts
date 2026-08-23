@@ -1,6 +1,14 @@
 
-import { GameState, GamePhase, RoomState, Player, RoomSettings } from "../../../../packages/shared/index.js";
-import { WORD_BANK } from "./words.js";
+import {
+  GameState, GamePhase, RoomState, Player, RoomSettings,
+  WordOption, Difficulty, DIFFICULTY_POINTS, DIFFICULTY_MULTIPLIER,
+} from "../../../../packages/shared/index.js";
+import { WORD_BANK, difficultyForList } from "./words.js";
+
+// Build a WordOption from a raw word + difficulty (points derived from tier).
+function makeOption(word: string, difficulty: Difficulty): WordOption {
+  return { word, difficulty, points: DIFFICULTY_POINTS[difficulty] };
+}
 
 
 export const DEFAULT_SETTINGS: RoomSettings = {
@@ -32,27 +40,31 @@ export function canAdvance(from: GamePhase, to: GamePhase): boolean {
 // Filters the loaded word bank by the room's language + enabled lists (and/or
 // custom words), then returns `count` distinct random words. Falls back safely
 // so a game can never stall on an empty pool.
-export function pickWords(count: number, settings: RoomSettings): string[] {
+export function pickWords(count: number, settings: RoomSettings): WordOption[] {
   const custom = settings.customWords.map((w) => w.trim()).filter(Boolean);
 
-  let pool: string[];
+  // dedupe by word (first occurrence wins), tracking each word's difficulty
+  const byWord = new Map<string, Difficulty>();
+
   if (settings.customWordsOnly) {
-    pool = custom;
+    for (const w of custom) if (!byWord.has(w)) byWord.set(w, "normal");
   } else {
     let bank = WORD_BANK.filter((e) => e.lang === settings.language);
     if (settings.lists.length) {
       const narrowed = bank.filter((e) => settings.lists.includes(e.list));
       if (narrowed.length) bank = narrowed; // don't let a bad filter empty the pool
     }
-    pool = [...bank.map((e) => e.word), ...custom];
+    for (const e of bank) if (!byWord.has(e.word)) byWord.set(e.word, difficultyForList(e.list));
+    for (const w of custom) if (!byWord.has(w)) byWord.set(w, "normal");
   }
 
-  const uniq = [...new Set(pool)];
-  if (uniq.length === 0) {
+  if (byWord.size === 0) {
     // last resort — never leave the drawer with nothing to pick
-    return WORD_BANK.slice(0, count).map((e) => e.word);
+    return WORD_BANK.slice(0, count).map((e) => makeOption(e.word, difficultyForList(e.list)));
   }
-  return uniq.sort(() => 0.5 - Math.random()).slice(0, Math.min(count, uniq.length));
+
+  const words = [...byWord.keys()].sort(() => 0.5 - Math.random()).slice(0, Math.min(count, byWord.size));
+  return words.map((w) => makeOption(w, byWord.get(w)!));
 }
 
 // A fresh "choosing" turn for the given drawer.
@@ -67,6 +79,9 @@ function choosingTurn(drawerId: string, round: number, drawnThisRound: string[])
     guessedIds: [],
     drawnThisRound,
     wordOptions: null,
+    wordDifficulty: null,
+    wordPoints: null,
+    rerollsLeft: 2,
     hint: null,
   };
 }
@@ -106,6 +121,10 @@ export function chooseWord(game: GameState, word: string, now: number, drawTimeM
   if (!canAdvance(game.phase, "drawing")) {
     throw new Error(`chooseWord called in phase "${game.phase}"`);
   }
+  // resolve the chosen word's difficulty from the offered options (fallback normal/200)
+  const opt = game.wordOptions?.find((o) => o.word === word);
+  const difficulty: Difficulty = opt?.difficulty ?? "normal";
+  const points = opt?.points ?? DIFFICULTY_POINTS[difficulty];
   return {
     ...game,
     phase: "drawing",
@@ -114,8 +133,15 @@ export function chooseWord(game: GameState, word: string, now: number, drawTimeM
     endsAt: now + drawTimeMs,
     guessedIds: [],
     wordOptions: null,   // options consumed once a word is chosen
+    wordDifficulty: difficulty,
+    wordPoints: points,
     hint: initialHint(word),
   };
+}
+
+// Multiply the raw time-based guess points by the difficulty tier and round.
+export function scaleByDifficulty(pts: number, difficulty: Difficulty | null): number {
+  return Math.round(pts * DIFFICULTY_MULTIPLIER[difficulty ?? "normal"]);
 }
 
 // End the round: drawing → scoring, clock stopped. The word gets revealed by

@@ -23,7 +23,20 @@ export default function Lobby({ room, isHost, wordLists, onLeave, onStart, onUpd
     const s = room.settings;
     const set = (patch: Partial<RoomSettings>) => onUpdateSettings({ ...s, ...patch });
     const [open, setOpen] = useState(false); // mobile: settings collapsed by default
+    const [copied, setCopied] = useState(false);
     const emptySlots = Math.max(0, Math.min(s.maxPlayers, 12) - room.players.length);
+    const soloish = room.players.length <= 1; // "just you in here" — nudge to invite
+
+    const copyInvite = async () => {
+        try {
+            const link = typeof window !== "undefined" ? `${window.location.origin}/?room=${room.roomId}` : room.roomId;
+            await navigator.clipboard.writeText(link);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1600);
+        } catch {
+            setCopied(false);
+        }
+    };
 
     // word-list controls. lists === [] means "all lists for this language".
     const langs = Object.keys(wordLists).length ? Object.keys(wordLists) : [s.language];
@@ -58,6 +71,25 @@ export default function Lobby({ room, isHost, wordLists, onLeave, onStart, onUpd
             {/* body */}
             <div className="flex gap-4 items-start flex-wrap">
                 <div className="flex-1 min-w-[280px] flex flex-col gap-4">
+                    {/* "just you in here" — nudge the host to invite a friend (#1h lobby-of-one) */}
+                    {soloish && (
+                        <div
+                            className="flex items-center justify-between gap-3 flex-wrap bg-card"
+                            style={{ border: "3px dashed color-mix(in srgb, var(--ink) 40%, transparent)", borderRadius: "14px 8px 14px 8px", padding: "12px 16px" }}
+                        >
+                            <div className="min-w-0">
+                                <div className="font-loud" style={{ fontWeight: 800, fontSize: 16 }}>Just you in here</div>
+                                <div className="text-ink/55" style={{ fontSize: 12, fontWeight: 600 }}>A one-player brawl is called drawing — send the code to a friend.</div>
+                            </div>
+                            <div className="flex items-center gap-2.5 flex-none">
+                                <span className="font-loud text-ink" dir="auto" style={{ border: "2.5px solid var(--outline)", borderRadius: 12, background: "var(--tape)", ...hardShadow(3, 3), padding: "8px 13px", fontWeight: 800, fontSize: 15, letterSpacing: ".18em" }}>{room.roomId}</span>
+                                <button onClick={copyInvite} className="font-loud text-card cursor-pointer bg-orange" style={{ border: "2.5px solid var(--outline)", borderRadius: 12, ...hardShadow(3, 3), padding: "9px 14px", fontWeight: 700, fontSize: 13 }}>
+                                    {copied ? "Copied!" : "Copy invite"}
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
                     {/* player grid */}
                     <div className="bg-card" style={{ borderRadius: "8px 22px 10px 20px", boxShadow: "0 10px 24px rgba(58,47,38,.14)", padding: 22 }}>
                         <div className="flex justify-between items-baseline mb-4 flex-wrap gap-2">

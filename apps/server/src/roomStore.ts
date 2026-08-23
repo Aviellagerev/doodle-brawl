@@ -56,8 +56,6 @@ export class RoomStore {
     await this.redis.del(`room:${roomId}`);
   }
 
-  // Total players currently across all rooms — powers the live "playing now"
-  // count. SCAN (not KEYS) so it never blocks Redis on large keyspaces.
   async countPlayers(): Promise<number> {
     let cursor = "0";
     let total = 0;

@@ -1,11 +1,12 @@
 import { Server, Socket } from "socket.io";
 import { RoomStore } from "../roomStore.js";
-import { DrawSegment, ChatMessage } from "../../../../packages/shared/index.js";
+import { DrawSegment, DrawOp, ChatMessage } from "../../../../packages/shared/index.js";
 import { RoomState, Player, RoomSettings, CHOOSE_TIME_MS, SCORING_DELAY_MS } from "../../../../packages/shared/index.js";
 import { createNewRoom, createNewPlayer } from "./../services/roomServices.js";
 import {
     chooseWord, createInitialGame, pickWords, publicRoom,
     toScoring, guessPoints, drawerBonus, allGuessed, advanceTurn, revealHintLetter,
+    scaleByDifficulty,
 } from "../game/skribbl.js";
 import { WORD_LISTS } from "../game/words.js";
 import { broadcastPlayerCount } from "../observability.js";
@@ -69,8 +70,6 @@ async function finishRound(io: Server, roomStore: RoomStore, roomId: string) {
     roundTimers.set(roomId, setTimeout(() => advanceRound(io, roomStore, roomId), SCORING_DELAY_MS));
 }
 
-// Advance from the scoreboard to the next turn — or end the game. Auto-fired by
-// the scoring timer set in finishRound.
 async function advanceRound(io: Server, roomStore: RoomStore, roomId: string) {
     clearRoundTimer(roomId);
     const room = await roomStore.getRoom(roomId);
@@ -88,9 +87,7 @@ async function advanceRound(io: Server, roomStore: RoomStore, roomId: string) {
     await offerWords(io, roomStore, room);    // set up the new drawer's choosing phase
 }
 
-// Set up the choosing phase: pick the candidate words, start the 15s choose
-// clock (broadcast so the drawer sees the options + countdown), and auto-pick
-// for them if they run it out.
+
 async function offerWords(io: Server, roomStore: RoomStore, room: RoomState) {
     if (!room.game) return;
     room.game.wordOptions = pickWords(room.settings.wordChoices, room.settings);
@@ -107,7 +104,7 @@ async function autoPickWord(io: Server, roomStore: RoomStore, roomId: string) {
     const room = await roomStore.getRoom(roomId);
     if (!room || !room.game || room.game.phase !== "choosing") return;
     const opts = room.game.wordOptions ?? pickWords(room.settings.wordChoices, room.settings);
-    const word = opts[Math.floor(Math.random() * opts.length)];
+    const word = opts[0].word;
     await commitWord(io, roomStore, roomId, word);
 }
 
@@ -274,6 +271,10 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
             const updated = await roomStore.startGame(roomId, game);
             if (!updated) return;
 
+            // fresh petty-awards tallies for the new game
+            updated.stats = { guessMs: {}, wrong: {}, doodle: {} };
+            await roomStore.saveRoom(updated);
+
             broadcastRoom(io, updated);   // everyone switches to the game screen
             await offerWords(io, roomStore, updated); // set up the choosing phase + timer
         }
@@ -294,13 +295,34 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
             const word = data.word;
             if (typeof word !== "string" || word.length === 0) return;
             // must be one of the offered options (can't inject an arbitrary word)
-            if (room.game.wordOptions && !room.game.wordOptions.includes(word)) return;
+            if (room.game.wordOptions && !room.game.wordOptions.some((o) => o.word === word)) return;
             await commitWord(io, roomStore, roomId, word);
         }
         catch (error) {
             console.error(`choose_word failed for room ${roomId}`, error);
         }
     })
+
+    // Drawer swaps out the three offered words for a fresh set. Does NOT reset the
+    // choose clock; capped at rerollsLeft (starts at 2 each choosing turn).
+    socket.on("reroll_words", async () => {
+        const roomId = socket.data.roomId;
+        if (!roomId) return;
+        try {
+            const room = await roomStore.getRoom(roomId);
+            if (!room || !room.game) return;
+            if (socket.data.playerId !== room.game.currentDrawerId) return; // drawer only
+            if (room.game.phase !== "choosing") return;                     // choosing only
+            if (room.game.rerollsLeft <= 0) return;                         // out of rerolls
+            room.game.wordOptions = pickWords(room.settings.wordChoices, room.settings);
+            room.game.rerollsLeft -= 1;
+            await roomStore.saveRoom(room);
+            broadcastRoom(io, room);   // drawer sees new options; others still redacted
+        } catch (error) {
+            console.error(`reroll_words failed for room ${roomId}`, error);
+        }
+    })
+
     socket.on("draw", async (segment: DrawSegment) => {
         const roomId = socket.data.roomId;
         if (!roomId) return;
@@ -313,6 +335,15 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
 
         // relay to everyone else in the room (socket.to excludes the sender)
         socket.to(roomId).emit("draw", segment);
+    });
+    // shape/fill tool ops (line/rect/ellipse/fill) — relayed exactly like "draw"
+    socket.on("draw_op", async (op: DrawOp) => {
+        const roomId = socket.data.roomId;
+        if (!roomId) return;
+        const room = await roomStore.getRoom(roomId);
+        if (!room || !room.game) return;
+        if (socket.data.playerId !== room.game.currentDrawerId) return; // drawer only
+        socket.to(roomId).emit("draw_op", op);
     });
     socket.on("clear", async () => {
         const roomId = socket.data.roomId;
@@ -346,21 +377,29 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
 
         // --- guess detection: only while drawing, and only against the secret word ---
         if (game && game.phase === "drawing" && game.word) {
+            const isDrawer = player.id === game.currentDrawerId;
+            const already = game.guessedIds.includes(player.id);
             const isWord = text.toLowerCase() === game.word.toLowerCase();
             if (isWord) {
-                const isDrawer = player.id === game.currentDrawerId;
-                const already = game.guessedIds.includes(player.id);
                 // NEVER echo the actual word into chat — it would leak to everyone.
                 // The drawer / an already-correct guesser typing it is just swallowed.
                 if (isDrawer || already) return;
 
-                // correct guess → time-based points for the guesser + bonus for the drawer
+                // correct guess → time-based points scaled by difficulty, plus drawer bonus
                 const timeLeft = (game.endsAt ?? Date.now()) - Date.now();
-                const pts = guessPoints(timeLeft, room.settings.drawTimeMs);
+                const elapsedMs = Math.max(0, room.settings.drawTimeMs - Math.max(0, timeLeft));
+                const pts = scaleByDifficulty(guessPoints(timeLeft, room.settings.drawTimeMs), game.wordDifficulty);
                 player.score = (player.score ?? 0) + pts;
                 const drawer = room.players.find((p) => p.id === game.currentDrawerId);
                 if (drawer) drawer.score = (drawer.score ?? 0) + drawerBonus(pts);
                 game.guessedIds.push(player.id);
+
+                // petty-awards stats: fastest correct guess + guessers earned by the drawer
+                const stats = (room.stats ??= { guessMs: {}, wrong: {}, doodle: {} });
+                const prevMs = stats.guessMs[player.id];
+                stats.guessMs[player.id] = prevMs === undefined ? elapsedMs : Math.min(prevMs, elapsedMs);
+                stats.doodle[game.currentDrawerId] = (stats.doodle[game.currentDrawerId] ?? 0) + 1;
+
                 await roomStore.saveRoom(room);
 
                 // announce WITHOUT the word, then push the updated scores
@@ -373,6 +412,14 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
                     await finishRound(io, roomStore, roomId);
                 }
                 return;
+            }
+            // a real (wrong) guess from an eligible guesser → tally it for MOST WRONG.
+            // The drawer's own chatter and already-correct players don't count.
+            if (!isDrawer && !already) {
+                const stats = (room.stats ??= { guessMs: {}, wrong: {}, doodle: {} });
+                stats.wrong[player.id] = (stats.wrong[player.id] ?? 0) + 1;
+                await roomStore.saveRoom(room);
+                // no broadcast needed — stats ride the next room_update; fall through to chat
             }
         }
 
@@ -417,6 +464,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
         if (!host || host.id !== socket.data.playerId) return; // host only
         room.status = "waiting";
         room.game = undefined;
+        room.stats = { guessMs: {}, wrong: {}, doodle: {} };
         for (const p of room.players) p.score = 0;
         await roomStore.saveRoom(room);
         broadcastRoom(io, room);

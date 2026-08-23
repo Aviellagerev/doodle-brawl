@@ -8,15 +8,28 @@ type JoinScreenProps = {
   onCreate: (name: string) => void;
   onJoin: (name: string, code: string) => void;
   playerCount?: number | null;   // live count of players currently in rooms
+  joinError?: string | null;     // server-side error to show inline (e.g. "room not found"); cleared by the parent
 };
 
-export default function JoinScreen({ onCreate, onJoin, playerCount }: JoinScreenProps) {
+export default function JoinScreen({ onCreate, onJoin, playerCount, joinError }: JoinScreenProps) {
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
   const [blob, setBlob] = useState(0);      // reroll counter for the avatar colour
   const [showHelp, setShowHelp] = useState(false);
+  const [nameError, setNameError] = useState(false);   // set when an action is attempted with an empty name
 
   const hardShadow = (x: number, y: number) => ({ boxShadow: `${x}px ${y}px 0 var(--outline)` });
+
+  // Guard onCreate/onJoin behind a name check; returns true when the name is valid.
+  const requireName = () => {
+    if (!name.trim()) {
+      setNameError(true);
+      return false;
+    }
+    return true;
+  };
+  const tryJoin = () => { if (requireName()) onJoin(name, code); };
+  const tryCreate = () => { if (requireName()) onCreate(name); };
 
   return (
     <div className="relative min-h-screen flex items-center justify-center gap-8 sm:gap-14 flex-wrap p-5 sm:p-10">
@@ -97,11 +110,19 @@ export default function JoinScreen({ onCreate, onJoin, playerCount }: JoinScreen
             </label>
             <input
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={(e) => { setName(e.target.value); if (nameError) setNameError(false); }}
               placeholder="Jelly Bandit"
               className="font-loud w-full bg-transparent outline-none text-ink border-b-[3px] border-dashed border-ink/40 placeholder:text-ink/30"
               style={{ padding: "2px 2px 9px", fontWeight: 700, fontSize: 24 }}
             />
+            {nameError && (
+              <span
+                className="inline-block mt-2 font-bold bg-card text-rose"
+                style={{ border: "2px solid var(--rose)", borderRadius: 9, padding: "3px 9px", fontSize: 12, transform: "rotate(-1.5deg)" }}
+              >
+                pick a name first
+              </span>
+            )}
           </div>
         </div>
 
@@ -117,16 +138,26 @@ export default function JoinScreen({ onCreate, onJoin, playerCount }: JoinScreen
           style={{ borderRadius: 14, padding: "13px 15px", fontWeight: 700, fontSize: 19, letterSpacing: ".2em" }}
         />
 
+        {/* server-side error (e.g. room not found), shown inline above the actions */}
+        {joinError && (
+          <div
+            className="font-bold bg-card text-rose mb-4"
+            style={{ border: "2px solid var(--rose)", borderRadius: 10, padding: "8px 12px", fontSize: 13, transform: "rotate(-0.8deg)" }}
+          >
+            {joinError}
+          </div>
+        )}
+
         {/* actions: join the entered code, or make a fresh room */}
         <button
-          onClick={() => onJoin(name, code)}
+          onClick={tryJoin}
           className="font-loud w-full mb-3 text-card cursor-pointer bg-orange"
           style={{ border: "3px solid var(--outline)", borderRadius: "34px 30px 34px 28px", padding: "18px 0", fontWeight: 800, fontSize: 27, ...hardShadow(5, 6) }}
         >
           Play now!
         </button>
         <button
-          onClick={() => onCreate(name)}
+          onClick={tryCreate}
           className="font-loud w-full text-ink cursor-pointer bg-card"
           style={{ border: "3px solid var(--outline)", borderRadius: "30px 34px 28px 34px", padding: "13px 0", fontWeight: 700, fontSize: 17, ...hardShadow(5, 6) }}
         >

@@ -1,9 +1,16 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { Socket } from "socket.io-client";
-import { DrawSegment } from "../../../../../packages/shared";
+import { DrawSegment, DrawOp } from "../../../../../packages/shared";
 
 type Props = { isDrawer: boolean; socket: Socket | null };
+
+type Tool = "pencil" | "eraser" | "line" | "rect" | "ellipse" | "fill";
+
+// history entry is either a freehand stroke (many segments) or one committed op
+type Entry =
+    | { kind: "stroke"; id: number; segs: DrawSegment[] }
+    | { kind: "op"; id: number; op: DrawOp };
 
 const PALETTE = [
     // row 1 — brights
@@ -18,6 +25,15 @@ const PALETTE = [
     "oklch(0.65 0.14 290)", "oklch(0.75 0.13 340)",
 ];
 const SIZES = [4, 8, 14, 22];
+
+const TOOLS: { id: Tool; glyph: string; title: string }[] = [
+    { id: "pencil", glyph: "✎", title: "Brush" },
+    { id: "line", glyph: "▬", title: "Line" },
+    { id: "rect", glyph: "◻", title: "Rectangle" },
+    { id: "ellipse", glyph: "◯", title: "Ellipse" },
+    { id: "fill", glyph: "▨", title: "Fill" },
+    { id: "eraser", glyph: "⌫", title: "Eraser" },
+];
 
 // draw one segment; `erase` clears (destination-out) instead of painting so the
 // paper + dot-grid behind the canvas shows through.
@@ -42,18 +58,83 @@ function drawSegment(
     ctx.restore();
 }
 
+// resolve any CSS color (hex / oklch / rgb) to concrete [r,g,b,a] via the browser
+function colorToRGBA(color: string): [number, number, number, number] {
+    const c = document.createElement("canvas");
+    c.width = c.height = 1;
+    const cx = c.getContext("2d");
+    if (!cx) return [0, 0, 0, 255];
+    cx.fillStyle = color;
+    cx.fillRect(0, 0, 1, 1);
+    const d = cx.getImageData(0, 0, 1, 1).data;
+    return [d[0], d[1], d[2], d[3]];
+}
+
+// scanline flood fill from (seedX,seedY) with fillColor, tolerant of AA edges.
+function floodFill(
+    ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement,
+    seedX: number, seedY: number, fillColor: [number, number, number, number],
+) {
+    const w = canvas.width, h = canvas.height;
+    const sx = Math.round(seedX), sy = Math.round(seedY);
+    if (sx < 0 || sy < 0 || sx >= w || sy >= h) return;
+    const img = ctx.getImageData(0, 0, w, h);
+    const data = img.data;
+    const t0 = (sy * w + sx) * 4;
+    const target = [data[t0], data[t0 + 1], data[t0 + 2], data[t0 + 3]];
+    const [fr, fg, fb, fa] = fillColor;
+    // already the fill color → nothing to do (and avoids an infinite loop)
+    if (Math.abs(target[0] - fr) + Math.abs(target[1] - fg) +
+        Math.abs(target[2] - fb) + Math.abs(target[3] - fa) <= 4) return;
+    const tol = 40 * 40;
+    const match = (i: number) => {
+        const dr = data[i] - target[0], dg = data[i + 1] - target[1];
+        const db = data[i + 2] - target[2], da = data[i + 3] - target[3];
+        return dr * dr + dg * dg + db * db + da * da <= tol;
+    };
+    const stack: [number, number][] = [[sx, sy]];
+    while (stack.length) {
+        const [x, y0] = stack.pop()!;
+        let y = y0;
+        // climb to the top of this vertical span
+        while (y >= 0 && match((y * w + x) * 4)) y--;
+        y++;
+        let spanLeft = false, spanRight = false;
+        while (y < h && match((y * w + x) * 4)) {
+            const p = (y * w + x) * 4;
+            data[p] = fr; data[p + 1] = fg; data[p + 2] = fb; data[p + 3] = fa;
+            if (x > 0) {
+                if (match((y * w + x - 1) * 4)) { if (!spanLeft) { stack.push([x - 1, y]); spanLeft = true; } }
+                else spanLeft = false;
+            }
+            if (x < w - 1) {
+                if (match((y * w + x + 1) * 4)) { if (!spanRight) { stack.push([x + 1, y]); spanRight = true; } }
+                else spanRight = false;
+            }
+            y++;
+        }
+    }
+    ctx.putImageData(img, 0, 0);
+}
+
 export default function DrawingBoard({ isDrawer, socket }: Props) {
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
     const drawingRef = useRef(false);
     const lastRef = useRef<{ x: number; y: number } | null>(null);
-    // stroke history (segments in normalized 0..1 coords) so we can undo + repaint.
-    const strokesRef = useRef<{ id: number; segs: DrawSegment[] }[]>([]);
+    // pixel start point of an in-progress shape (line/rect/ellipse)
+    const shapeStartRef = useRef<{ x: number; y: number } | null>(null);
+    // stroke/op history (normalized 0..1 coords) so we can undo + repaint.
+    const strokesRef = useRef<Entry[]>([]);
     const strokeIdRef = useRef(0);
+    // keep the live tool available inside pointer handlers without re-binding
+    const toolRef = useRef<Tool>("pencil");
 
     const [color, setColor] = useState(PALETTE[0]);
     const [width, setWidth] = useState(SIZES[1]);
-    const [erasing, setErasing] = useState(false);
+    const [tool, setTool] = useState<Tool>("pencil");
     const [canUndo, setCanUndo] = useState(false);
+
+    useEffect(() => { toolRef.current = tool; }, [tool]);
 
     function getPoint(e: React.PointerEvent<HTMLCanvasElement>) {
         const canvas = canvasRef.current;
@@ -78,14 +159,51 @@ export default function DrawingBoard({ isDrawer, socket }: Props) {
         );
     }
 
-    // record a segment into the current stroke (grouped by strokeId) and paint it
+    // paint a committed op (shape or fill), coords normalized 0..1
+    function paintOp(op: DrawOp) {
+        const canvas = canvasRef.current;
+        const ctx = canvas?.getContext("2d");
+        if (!canvas || !ctx) return;
+        const f = { x: op.from.x * canvas.width, y: op.from.y * canvas.height };
+        const t = { x: op.to.x * canvas.width, y: op.to.y * canvas.height };
+        if (op.kind === "fill") {
+            floodFill(ctx, canvas, f.x, f.y, colorToRGBA(op.color));
+            return;
+        }
+        ctx.save();
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.lineWidth = op.width;
+        ctx.strokeStyle = op.color;
+        ctx.beginPath();
+        if (op.kind === "line") {
+            ctx.moveTo(f.x, f.y);
+            ctx.lineTo(t.x, t.y);
+        } else if (op.kind === "rect") {
+            ctx.rect(Math.min(f.x, t.x), Math.min(f.y, t.y), Math.abs(t.x - f.x), Math.abs(t.y - f.y));
+        } else if (op.kind === "ellipse") {
+            const cx = (f.x + t.x) / 2, cy = (f.y + t.y) / 2;
+            ctx.ellipse(cx, cy, Math.abs(t.x - f.x) / 2, Math.abs(t.y - f.y) / 2, 0, 0, Math.PI * 2);
+        }
+        ctx.stroke();
+        ctx.restore();
+    }
+
+    // record a segment into the current freehand stroke (grouped by strokeId) and paint it
     function pushSegment(seg: DrawSegment) {
         const list = strokesRef.current;
         const last = list[list.length - 1];
-        if (last && last.id === seg.strokeId) last.segs.push(seg);
-        else list.push({ id: seg.strokeId ?? 0, segs: [seg] });
+        if (last && last.kind === "stroke" && last.id === seg.strokeId) last.segs.push(seg);
+        else list.push({ kind: "stroke", id: seg.strokeId ?? 0, segs: [seg] });
         paintSeg(seg);
         setCanUndo(list.length > 0);
+    }
+
+    // record a committed op as ONE history entry and paint it
+    function pushOp(op: DrawOp) {
+        strokesRef.current.push({ kind: "op", id: op.strokeId ?? 0, op });
+        paintOp(op);
+        setCanUndo(strokesRef.current.length > 0);
     }
 
     function repaint() {
@@ -93,7 +211,10 @@ export default function DrawingBoard({ isDrawer, socket }: Props) {
         const ctx = canvas?.getContext("2d");
         if (!canvas || !ctx) return;
         ctx.clearRect(0, 0, canvas.width, canvas.height);
-        for (const st of strokesRef.current) for (const seg of st.segs) paintSeg(seg);
+        for (const e of strokesRef.current) {
+            if (e.kind === "stroke") for (const seg of e.segs) paintSeg(seg);
+            else paintOp(e.op);
+        }
     }
 
     function undo() {
@@ -106,19 +227,57 @@ export default function DrawingBoard({ isDrawer, socket }: Props) {
 
     function handlePointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
         if (!isDrawer) return;
-        const p = getPoint(e);
-        if (!p) return;
-        drawingRef.current = true;
-        lastRef.current = p;
-        strokeIdRef.current += 1;   // new stroke
-    }
-
-    function handlePointerMove(e: React.PointerEvent<HTMLCanvasElement>) {
-        if (!drawingRef.current || !lastRef.current) return;
         const canvas = canvasRef.current;
         const p = getPoint(e);
         if (!canvas || !p) return;
+        const t = toolRef.current;
+        strokeIdRef.current += 1;   // new stroke / op group
 
+        if (t === "fill") {
+            const op: DrawOp = {
+                kind: "fill",
+                from: { x: p.x / canvas.width, y: p.y / canvas.height },
+                to: { x: p.x / canvas.width, y: p.y / canvas.height },
+                color, width, strokeId: strokeIdRef.current,
+            };
+            pushOp(op);
+            socket?.emit("draw_op", op);
+            return;
+        }
+        if (t === "line" || t === "rect" || t === "ellipse") {
+            drawingRef.current = true;
+            shapeStartRef.current = p;
+            return;
+        }
+        // pencil / eraser — freehand
+        drawingRef.current = true;
+        lastRef.current = p;
+    }
+
+    function handlePointerMove(e: React.PointerEvent<HTMLCanvasElement>) {
+        if (!drawingRef.current) return;
+        const canvas = canvasRef.current;
+        const p = getPoint(e);
+        if (!canvas || !p) return;
+        const t = toolRef.current;
+
+        if (t === "line" || t === "rect" || t === "ellipse") {
+            const s = shapeStartRef.current;
+            if (!s) return;
+            // rubber-band: redraw committed history, then the in-progress shape on top
+            repaint();
+            paintOp({
+                kind: t,
+                from: { x: s.x / canvas.width, y: s.y / canvas.height },
+                to: { x: p.x / canvas.width, y: p.y / canvas.height },
+                color, width,
+            });
+            return;
+        }
+
+        // pencil / eraser
+        if (!lastRef.current) return;
+        const erasing = t === "eraser";
         const segWidth = erasing ? width * 2.5 : width;
         const seg: DrawSegment = {
             from: { x: lastRef.current.x / canvas.width, y: lastRef.current.y / canvas.height },
@@ -130,9 +289,29 @@ export default function DrawingBoard({ isDrawer, socket }: Props) {
         lastRef.current = p;
     }
 
-    function handlePointerUp() {
+    function handlePointerUp(e?: React.PointerEvent<HTMLCanvasElement>) {
+        const t = toolRef.current;
+        if (drawingRef.current && (t === "line" || t === "rect" || t === "ellipse")) {
+            const canvas = canvasRef.current;
+            const s = shapeStartRef.current;
+            const p = e ? getPoint(e) : null;
+            if (canvas && s && p) {
+                const op: DrawOp = {
+                    kind: t,
+                    from: { x: s.x / canvas.width, y: s.y / canvas.height },
+                    to: { x: p.x / canvas.width, y: p.y / canvas.height },
+                    color, width, strokeId: strokeIdRef.current,
+                };
+                repaint();            // drop the live preview
+                pushOp(op);           // commit as one undoable entry
+                socket?.emit("draw_op", op);
+            } else {
+                repaint();            // no valid end point — discard preview
+            }
+        }
         drawingRef.current = false;
         lastRef.current = null;
+        shapeStartRef.current = null;
     }
 
     function clearCanvas() {
@@ -148,10 +327,11 @@ export default function DrawingBoard({ isDrawer, socket }: Props) {
         socket?.emit("clear");
     }
 
-    // receive + replay remote strokes, clears and undos
+    // receive + replay remote strokes, ops, clears and undos
     useEffect(() => {
         if (!socket) return;
         function onRemoteDraw(seg: DrawSegment) { pushSegment(seg); }
+        function onRemoteOp(op: DrawOp) { pushOp(op); }
         function onRemoteClear() { strokesRef.current = []; setCanUndo(false); clearCanvas(); }
         function onRemoteUndo() {
             if (!strokesRef.current.length) return;
@@ -160,10 +340,12 @@ export default function DrawingBoard({ isDrawer, socket }: Props) {
             setCanUndo(strokesRef.current.length > 0);
         }
         socket.on("draw", onRemoteDraw);
+        socket.on("draw_op", onRemoteOp);
         socket.on("clear", onRemoteClear);
         socket.on("undo", onRemoteUndo);
         return () => {
             socket.off("draw", onRemoteDraw);
+            socket.off("draw_op", onRemoteOp);
             socket.off("clear", onRemoteClear);
             socket.off("undo", onRemoteUndo);
         };
@@ -209,11 +391,11 @@ export default function DrawingBoard({ isDrawer, socket }: Props) {
                     {/* palette */}
                     <div className="grid" style={{ gridTemplateColumns: "repeat(11, 18px)", gridAutoRows: 18, gap: 3 }}>
                         {PALETTE.map((c) => {
-                            const active = color === c && !erasing;
+                            const active = color === c && tool !== "eraser";
                             return (
                                 <button
                                     key={c}
-                                    onClick={() => { setColor(c); setErasing(false); }}
+                                    onClick={() => { setColor(c); if (tool === "eraser") setTool("pencil"); }}
                                     className="cursor-pointer"
                                     style={{ borderRadius: 5, background: c, boxShadow: active ? "0 0 0 2.5px var(--ink), 0 0 0 4.5px var(--card)" : "inset 0 0 0 1px rgba(58,47,38,.25)" }}
                                 />
@@ -223,16 +405,27 @@ export default function DrawingBoard({ isDrawer, socket }: Props) {
 
                     <span style={{ width: 2, height: 34, background: "color-mix(in srgb, var(--ink) 15%, transparent)", borderRadius: 2 }} />
 
-                    {/* tools — pencil + eraser (concept also shows shape tools; not built yet) */}
+                    {/* tools — brush, line, rect, ellipse, fill, eraser */}
                     <div className="flex items-center gap-1.5">
-                        <button onClick={() => setErasing(false)} title="Pencil" className="grid place-items-center cursor-pointer text-ink"
-                            style={{ width: 34, height: 34, borderRadius: 11, fontSize: 15, border: `2.5px solid ${!erasing ? "var(--outline)" : "color-mix(in srgb, var(--ink) 30%, transparent)"}`, background: !erasing ? "var(--amber)" : "var(--paper)", boxShadow: !erasing ? "2.5px 2.5px 0 var(--outline)" : "none" }}>
-                            ✎
-                        </button>
-                        <button onClick={() => setErasing(true)} title="Eraser" className="grid place-items-center cursor-pointer text-ink"
-                            style={{ width: 34, height: 34, borderRadius: 11, fontSize: 15, border: `2.5px solid ${erasing ? "var(--outline)" : "color-mix(in srgb, var(--ink) 30%, transparent)"}`, background: erasing ? "var(--amber)" : "var(--paper)", boxShadow: erasing ? "2.5px 2.5px 0 var(--outline)" : "none" }}>
-                            ⌫
-                        </button>
+                        {TOOLS.map((tl) => {
+                            const active = tool === tl.id;
+                            return (
+                                <button
+                                    key={tl.id}
+                                    onClick={() => setTool(tl.id)}
+                                    title={tl.title}
+                                    className="grid place-items-center cursor-pointer text-ink"
+                                    style={{
+                                        width: 34, height: 34, borderRadius: 11, fontSize: 15,
+                                        border: `2.5px solid ${active ? "var(--outline)" : "color-mix(in srgb, var(--ink) 30%, transparent)"}`,
+                                        background: active ? "var(--amber)" : "var(--paper)",
+                                        boxShadow: active ? "2.5px 2.5px 0 var(--outline)" : "none",
+                                    }}
+                                >
+                                    {tl.glyph}
+                                </button>
+                            );
+                        })}
                     </div>
 
                     <span style={{ width: 2, height: 34, background: "color-mix(in srgb, var(--ink) 15%, transparent)", borderRadius: 2 }} />
