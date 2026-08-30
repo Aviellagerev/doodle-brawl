@@ -1,16 +1,11 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { Socket } from "socket.io-client";
-import { DrawSegment, DrawOp } from "../../../../../packages/shared";
+import { DrawSegment, DrawOp, DrawEntry } from "../../../../../packages/shared";
 
 type Props = { isDrawer: boolean; socket: Socket | null };
 
 type Tool = "pencil" | "eraser" | "line" | "rect" | "ellipse" | "fill";
-
-// history entry is either a freehand stroke (many segments) or one committed op
-type Entry =
-    | { kind: "stroke"; id: number; segs: DrawSegment[] }
-    | { kind: "op"; id: number; op: DrawOp };
 
 const PALETTE = [
     // row 1 — brights
@@ -124,7 +119,7 @@ export default function DrawingBoard({ isDrawer, socket }: Props) {
     // pixel start point of an in-progress shape (line/rect/ellipse)
     const shapeStartRef = useRef<{ x: number; y: number } | null>(null);
     // stroke/op history (normalized 0..1 coords) so we can undo + repaint.
-    const strokesRef = useRef<Entry[]>([]);
+    const strokesRef = useRef<DrawEntry[]>([]);
     const strokeIdRef = useRef(0);
     // keep the live tool available inside pointer handlers without re-binding
     const toolRef = useRef<Tool>("pencil");
@@ -339,15 +334,26 @@ export default function DrawingBoard({ isDrawer, socket }: Props) {
             repaint();
             setCanUndo(strokesRef.current.length > 0);
         }
+        // authoritative snapshot for a late join / reconnect: replace history + repaint.
+        // (any live op that arrived before this is included; ops after it arrive later
+        // and append, so no double-paint.)
+        function onCanvasState(entries: DrawEntry[]) {
+            strokesRef.current = entries;
+            repaint();
+            setCanUndo(entries.length > 0);
+        }
         socket.on("draw", onRemoteDraw);
         socket.on("draw_op", onRemoteOp);
         socket.on("clear", onRemoteClear);
         socket.on("undo", onRemoteUndo);
+        socket.on("canvas_state", onCanvasState);
+        socket.emit("request_canvas");   // get the drawing so far (empty at turn start)
         return () => {
             socket.off("draw", onRemoteDraw);
             socket.off("draw_op", onRemoteOp);
             socket.off("clear", onRemoteClear);
             socket.off("undo", onRemoteUndo);
+            socket.off("canvas_state", onCanvasState);
         };
     }, [socket]);
 

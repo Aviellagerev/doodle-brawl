@@ -76,11 +76,10 @@ export const DIFFICULTY_MULTIPLIER: Record<Difficulty, number> = {
 export interface WordOption {
   word: string;
   difficulty: Difficulty;
-  points: number;   // display points for this difficulty (DIFFICULTY_POINTS[difficulty])
+  points: number;   
 }
 
-// One line on the "Round N payout" scoring screen: a player, the points they
-// earned this turn, and a human-readable reason. Safe to broadcast to everyone.
+
 export interface PayoutEntry {
   playerId: string;
   points: number;
@@ -132,6 +131,12 @@ export interface DrawOp {
   width: number;
   strokeId?: number;   // groups this op with the current stroke (for undo)
 }
+// One entry in the current turn's drawing history: either a freehand stroke (its
+// segments) or a single committed op. The server keeps an ordered list of these
+// per room and replays them to anyone who joins mid-draw ("canvas_state" event).
+export type DrawEntry =
+  | { kind: "stroke"; id: number; segs: DrawSegment[] }
+  | { kind: "op"; id: number; op: DrawOp };
 export interface ChatMessage {
   author: string;
   text: string;
