@@ -106,6 +106,8 @@ export interface GameState {
   // null during "choosing"; [] once "drawing" starts, filled as players guess;
   // finalized (drawer bonus + missed players appended) when the turn ends.
   payout: PayoutEntry[] | null;
+  turnStartedAt: number | null;   // epoch ms when the phase became "drawing"
+
 }
 
 export interface Point {
@@ -119,6 +121,7 @@ export interface DrawSegment{
   width:number;
   erase?:boolean;   // eraser stroke — receivers clear instead of paint
   strokeId?:number; // groups segments of one pointer-down..up stroke (for undo)
+  t?:number //ms since turn start (present in replayed only)
 }
 // A single committed shape/fill operation from the drawer's tools (line/rect/
 // ellipse/fill). Relayed drawer→room like DrawSegment. For "fill", `from` is the
@@ -130,6 +133,7 @@ export interface DrawOp {
   color: string;
   width: number;
   strokeId?: number;   // groups this op with the current stroke (for undo)
+   t?:number
 }
 // One entry in the current turn's drawing history: either a freehand stroke (its
 // segments) or a single committed op. The server keeps an ordered list of these
