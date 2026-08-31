@@ -27,6 +27,9 @@ function recordSeg(roomId: string, seg: DrawSegment) {
     else hist.push({ kind: "stroke", id: seg.strokeId ?? 0, segs: [seg] });
     drawHistory.set(roomId, hist);
 }
+function stampT(game: GameState): number | undefined{
+    return game.turnStartedAt ? Date.now() - game.turnStartedAt : undefined;
+}
 // separate from the phase timer: fires the gradual letter reveals during drawing
 const hintTimers = new Map<string, NodeJS.Timeout>();
 
@@ -100,6 +103,9 @@ async function finishRound(io: Server, roomStore: RoomStore, roomId: string) {
     const room = await roomStore.getRoom(roomId);
     if (!room || !room.game || room.game.phase !== "drawing") return;
     finalizePayout(room.game, room.players);
+    const h = drawHistory.get(roomId) ?? [];
+console.log("t:", h.flatMap(e => e.kind === "stroke" ? e.segs.map(s => s.t) : [e.op.t]));
+
     room.game = toScoring(room.game);
     room.game.endsAt = Date.now() + SCORING_DELAY_MS;   // deadline for the scoreboard countdown
     await roomStore.saveRoom(room);
@@ -383,7 +389,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
 
         // relay to everyone else in the room (socket.to excludes the sender)
         socket.to(roomId).emit("draw", segment);
-        recordSeg(roomId, segment);   // keep the turn's canvas for late joiners
+        recordSeg(roomId, { ...segment, t :stampT(room.game)});   // keep the turn's canvas for late joiners
     });
     // shape/fill tool ops (line/rect/ellipse/fill) — relayed exactly like "draw"
     socket.on("draw_op", async (op: DrawOp) => {
@@ -393,8 +399,13 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
         if (!room || !room.game) return;
         if (socket.data.playerId !== room.game.currentDrawerId) return; // drawer only
         socket.to(roomId).emit("draw_op", op);
+        
         const h = drawHistory.get(roomId) ?? [];
-        h.push({ kind: "op", id: op.strokeId ?? 0, op });
+        console.log(h.map(e => e.kind === "stroke"
+  ? `stroke×${e.segs.length}@${e.segs[0]?.t}`
+  : `op:${e.op.kind}@${e.op.t}`));
+
+        h.push({ kind: "op", id: op.strokeId ?? 0, op:{...op,t:stampT(room.game)}});
         drawHistory.set(roomId, h);
     });
     socket.on("clear", async () => {
