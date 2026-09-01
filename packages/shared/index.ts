@@ -145,4 +145,22 @@ export interface ChatMessage {
   author: string;
   text: string;
   kind: "chat" | "system" | "correct";   // correct = someone guessed the word
+  // Who said it. Absent on genuine System lines (join/leave). Present even on the
+  // "X guessed the word!" System line, so guesses stay attributable without
+  // parsing the sentence.
+  playerId?: string;
+}
+
+// Longest chat message accepted. Chat is attacker-controlled AND persisted, so
+// this is a storage bound, not just a UI nicety.
+export const MAX_CHAT_LEN = 200;
+
+// One recorded chat line. Stored only — never sent over the wire. `at` is an
+// absolute instant rather than an offset because lobby chat has no turn to be
+// relative to; the offset is derived at replay time from the turn's start.
+export interface ChatEntry {
+  msg: ChatMessage;
+  at: number;                // epoch ms
+  round: number | null;      // null outside a game
+  drawerId: string | null;   // with `round`, identifies the turn
 }

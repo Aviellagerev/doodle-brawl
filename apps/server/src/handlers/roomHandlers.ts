@@ -1,6 +1,6 @@
 import { Server, Socket } from "socket.io";
 import { RoomStore } from "../roomStore.js";
-import { DrawSegment, DrawOp, DrawEntry, ChatMessage, PayoutEntry } from "../../../../packages/shared/index.js";
+import { DrawSegment, DrawOp, DrawEntry, ChatMessage, ChatEntry, MAX_CHAT_LEN, PayoutEntry } from "../../../../packages/shared/index.js";
 import { RoomState, Player, RoomSettings, GameState, CHOOSE_TIME_MS, SCORING_DELAY_MS } from "../../../../packages/shared/index.js";
 import { createNewRoom, createNewPlayer } from "./../services/roomServices.js";
 import {
@@ -18,6 +18,35 @@ const roundTimers = new Map<string, NodeJS.Timeout>();
 // the CURRENT turn's drawing, per room, so we can replay it to anyone who joins
 // or reconnects mid-draw. Reset each turn; grows with strokes, shrinks on undo/clear.
 const drawHistory = new Map<string, DrawEntry[]>();
+// the MATCH's chat, per room. Unlike drawHistory (reset each turn) this spans a
+// whole match: reset when a game starts, persisted when it ends. Capped, because
+// chat is attacker-controlled and now ends up on disk.
+const MAX_CHAT_ENTRIES = 2000;
+const chatHistory = new Map<string, ChatEntry[]>();
+
+// Single funnel for every chat line: record it for the match history, then emit.
+// ALL chat must go through here — there are five call sites, and one that skips
+// this silently drops history with nothing to catch it at compile time.
+function say(io: Server, roomId: string, msg: ChatMessage, game?: GameState | null) {
+    const hist = chatHistory.get(roomId) ?? [];
+    if (hist.length < MAX_CHAT_ENTRIES) {
+        hist.push({
+            msg,
+            at: Date.now(),
+            round: game?.round ?? null,
+            drawerId: game?.currentDrawerId ?? null,
+        });
+        chatHistory.set(roomId, hist);
+    }
+    io.to(roomId).emit("chat_message", msg);
+}
+
+// a room with no players left is gone from Redis — drop its buffers too, or the
+// Maps grow forever with dead rooms.
+function forgetRoom(roomId: string) {
+    chatHistory.delete(roomId);
+    drawHistory.delete(roomId);
+}
 
 // record a freehand segment into the room's history, grouped into a stroke by strokeId
 function recordSeg(roomId: string, seg: DrawSegment) {
@@ -124,6 +153,9 @@ async function advanceRound(io: Server, roomStore: RoomStore, roomId: string) {
         room.status = "finished";            // → victory screen
         await roomStore.saveRoom(room);
         broadcastRoom(io, room);
+        // TODO(match-history): the match is complete here — persist chatHistory
+        // and the per-turn replays to Postgres, then clear the buffers. Until then
+        // they're held until the next start_game resets them.
         return;
     }
     await roomStore.saveRoom(room);
@@ -251,7 +283,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
                 console.log(`user: ${newPlayer.name} joined id: ${newPlayer.id}`);
                 broadcastRoom(io, room);
                 broadcastPlayerCount(io, roomStore);
-                io.to(roomId).emit("chat_message", { author: "System", text: `${newPlayer.name} joined the room`, kind: "system" } as ChatMessage);
+                say(io, roomId, { author: "System", text: `${newPlayer.name} joined the room`, kind: "system", playerId: newPlayer.id }, room.game);
                 callback({ success: true, roomId: roomId, room });
             }
             else {
@@ -276,7 +308,9 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
             socket.leave(data.roomId);
             if (room) {
                 broadcastRoom(io, room);
-                io.to(room.roomId).emit("chat_message", { author: "System", text: `${removed?.name ?? "A player"} left the room`, kind: "system" } as ChatMessage);
+                say(io, room.roomId, { author: "System", text: `${removed?.name ?? "A player"} left the room`, kind: "system", playerId: removed?.id }, room.game);
+            } else {
+                forgetRoom(data.roomId);   // room emptied and was deleted
             }
             broadcastPlayerCount(io, roomStore);
             callback({ success: true });
@@ -295,7 +329,9 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
                 const { room, removed } = await roomStore.leavePlayer(roomId, playerId);
                 if (room) {
                     broadcastRoom(io, room);
-                    io.to(roomId).emit("chat_message", { author: "System", text: `${removed?.name ?? "A player"} left the room`, kind: "system" } as ChatMessage);
+                    say(io, roomId, { author: "System", text: `${removed?.name ?? "A player"} left the room`, kind: "system", playerId: removed?.id }, room.game);
+                } else {
+                    forgetRoom(roomId);   // room emptied and was deleted
                 }
                 broadcastPlayerCount(io, roomStore);
             } catch (error) {
@@ -325,6 +361,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
             const game = createInitialGame(host.id);
             const updated = await roomStore.startGame(roomId, game);
             if (!updated) return;
+            chatHistory.set(roomId, []);   // fresh chat log for this match
 
             // fresh petty-awards tallies for the new game
             updated.stats = { guessMs: {}, wrong: {}, doodle: {} };
@@ -438,7 +475,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
         if (!roomId) return;
         const raw = data.text;
         if (typeof raw !== "string" || raw.trim().length === 0) return;
-        const text = raw.trim();
+        const text = raw.trim().slice(0, MAX_CHAT_LEN);   // bound it: this gets stored
 
         const room = await roomStore.getRoom(roomId);
         if (!room) return;
@@ -482,8 +519,10 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
                 await roomStore.saveRoom(room);
 
                 // announce WITHOUT the word, then push the updated scores
-                const note: ChatMessage = { author: "System", text: `${player.name} guessed the word!`, kind: "correct" };
-                io.to(roomId).emit("chat_message", note);
+                // stays authored by System (the word must not leak), but carries the
+                // guesser's id so the guess is queryable without parsing prose
+                const note: ChatMessage = { author: "System", text: `${player.name} guessed the word!`, kind: "correct", playerId: player.id };
+                say(io, roomId, note, game);
                 broadcastRoom(io, room);
 
                 // everyone guessed? end the round now instead of waiting for the clock
@@ -502,8 +541,8 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
         }
 
      
-        const message: ChatMessage = { author: player.name, text, kind: "chat" };
-        io.to(roomId).emit("chat_message", message);   // io.to = everyone INCLUDING sender
+        const message: ChatMessage = { author: player.name, text, kind: "chat", playerId: player.id };
+        say(io, roomId, message, room.game);   // records for history, then emits to everyone
     });
 
     socket.on("update_settings", async (data) => {
