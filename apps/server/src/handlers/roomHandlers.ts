@@ -1,6 +1,6 @@
 import { Server, Socket } from "socket.io";
 import { RoomStore } from "../roomStore.js";
-import { DrawSegment, DrawOp, DrawEntry, ChatMessage, ChatEntry, MAX_CHAT_LEN, PayoutEntry } from "../../../../packages/shared/index.js";
+import { DrawSegment, DrawOp, DrawEntry, ChatMessage, ChatEntry, MAX_CHAT_LEN, MAX_NAME_LEN, PayoutEntry } from "../../../../packages/shared/index.js";
 import { RoomState, Player, RoomSettings, GameState, CHOOSE_TIME_MS, SCORING_DELAY_MS } from "../../../../packages/shared/index.js";
 import { createNewRoom, createNewPlayer } from "./../services/roomServices.js";
 import {
@@ -9,6 +9,7 @@ import {
     scaleByDifficulty,
 } from "../game/skribbl.js";
 import { startMatch, startTurn, logGuess, logChat, closeTurn, takeMatch, forgetMatch } from "../matchLog.js";
+import { renamePlayer } from "../playerStore.js";
 import { WORD_LISTS } from "../game/words.js";
 import { broadcastPlayerCount } from "../observability.js";
 import { saveMatch } from "../matchStore.js";
@@ -196,6 +197,11 @@ async function commitWord(io: Server, roomStore: RoomStore, roomId: string, word
 }
 
 // Clamp an incoming (untrusted) setting value into a sane range.
+// names are attacker-controlled: bound the length, and never let a blank one through
+function cleanName(v: unknown): string {
+    return String(v ?? "").trim().slice(0, MAX_NAME_LEN) || "Player";
+}
+
 function clamp(v: unknown, min: number, max: number, fallback: number): number {
     const n = typeof v === "number" && Number.isFinite(v) ? v : fallback;
     return Math.max(min, Math.min(max, Math.round(n)));
@@ -217,10 +223,13 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
     roomStore.countPlayers().then((n) => socket.emit("player_count", n)).catch(() => { });
 
     socket.on("create_room", async (data, callback) => {
+        const name = cleanName(data.name);
+        renamePlayer(socket.data.playerId, name).catch((err) =>
+            console.error("renamePlayer failed", err));
         const hostPlayer: Player = createNewPlayer({
-            id: data.id,
+            id: socket.data.playerId,
             socketId: socket.id,
-            name: data.name,
+            name,
             isHost: true,
         });
 
@@ -231,7 +240,6 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
 
             socket.join(newRoom.roomId);
             socket.data.roomId = newRoom.roomId;
-            socket.data.playerId = hostPlayer.id;
             broadcastRoom(io, newRoom);
             broadcastPlayerCount(io, roomStore);
             console.log(`Room ${newRoom.roomId} created by ${hostPlayer.name}`);
@@ -248,14 +256,17 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
     socket.on('join_room', async (data, callback) => {
 
         const roomId = data.code;
+        const name = cleanName(data.name);
+        renamePlayer(socket.data.playerId, name).catch((err) =>
+            console.error("renamePlayer failed", err));
         const newPlayer: Player = createNewPlayer({
-            id: data.id,
+            id: socket.data.playerId,
             socketId: socket.id,
-            name: data.name,
+            name,
             isHost: false,
         })
-        const timer = disconectTimers.get(data.id);
-        if (timer) { clearTimeout(timer); disconectTimers.delete(data.id); }
+        const timer = disconectTimers.get(socket.data.playerId);
+        if (timer) { clearTimeout(timer); disconectTimers.delete(socket.data.playerId); }
         //stop and reconect (disconnect doesnt remove player (aka fixed no host bug))
         try {
             const existing = await roomStore.getRoom(roomId);
@@ -273,7 +284,6 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
 
                 socket.join(roomId);
                 socket.data.roomId = room.roomId;
-                socket.data.playerId = newPlayer.id;
                 console.log(`user: ${newPlayer.name} joined id: ${newPlayer.id}`);
                 broadcastRoom(io, room);
                 broadcastPlayerCount(io, roomStore);
@@ -298,8 +308,9 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
 
     socket.on("leave_room", async (data, callback) => {
         try {
-            const { room, removed } = await roomStore.leavePlayer(data.roomId, data.id);
+            const { room, removed } = await roomStore.leavePlayer(data.roomId, socket.data.playerId);
             socket.leave(data.roomId);
+
             if (room) {
                 broadcastRoom(io, room);
                 say(io, room.roomId, { author: "System", text: `${removed?.name ?? "A player"} left the room`, kind: "system", playerId: removed?.id }, room.game);

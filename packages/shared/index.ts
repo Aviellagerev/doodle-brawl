@@ -144,6 +144,10 @@ export interface ChatMessage {
 
 export const MAX_CHAT_LEN = 200;
 
+// Longest display name accepted. Names are attacker-controlled and now reach
+// Postgres as well as Redis and every broadcast.
+export const MAX_NAME_LEN = 24;
+
 
 export interface ChatEntry {
   msg: ChatMessage;

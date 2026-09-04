@@ -2,7 +2,6 @@
 
 import { useEffect, useState, useRef } from "react";
 import { io, Socket } from "socket.io-client";
-import { v4 as uuidv4 } from 'uuid';
 import { RoomResponse, RoomState, ChatMessage, RoomSettings } from "../../../packages/shared";
 import JoinScreen from "./components/JoinScreen";
 import Lobby from "./components/Lobby";
@@ -10,6 +9,8 @@ import GameScreen from "./components/game/GameScreen";
 import GameOver from "./components/game/GameOver";
 import Chat from "./components/game/Chat";
 import { RoomNotFound, RoomFull, Disconnected } from "./components/game/StateScreens";
+
+const SERVER = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:3001";
 export default function Home() {
   const [status, setStatus] = useState<string>("connecting...");
   const [socketId, setSocketId] = useState<string>("(none)");
@@ -23,83 +24,84 @@ export default function Home() {
   const [playerCount, setPlayerCount] = useState<number | null>(null);
   // failed-join state → full-frame RoomNotFound / RoomFull screens
   const [joinFail, setJoinFail] = useState<{ kind: "notfound" | "full"; code: string } | null>(null);
-  // dropped connection while in a room → the reconnect overlay
-  const [disconnected, setDisconnected] = useState(false);
+ const [disconnected, setDisconnected] = useState(false);
   const [reconnectSeconds, setReconnectSeconds] = useState(30);
-  // room code pulled from an invite link (?room=CODE) → JoinScreen's compact invite mode
   const [inviteCode, setInviteCode] = useState<string | null>(null);
 
   const addLog = (line: string) => {
     setLog((prev) => [...prev, `[${new Date().toLocaleTimeString([], { hour12: false })}] ${line}`]);
   };
 
-  // Local system line straight into the chat feed (connect/disconnect etc.)
+ 
   const addSystem = (text: string) =>
     setMessages((prev) => [...prev, { author: "System", text, kind: "system" }]);
 
-  function getPermanentPlayerId() {
-    let playerId = localStorage.getItem("skribbl_player_id");
-    if (!playerId) {
-      playerId = uuidv4();
-      localStorage.setItem("skribbl_player_id", playerId);
-    }
-    return playerId;
-  }
 
-  // keep a ref of the room so the (once-bound) socket handlers can read it
   useEffect(() => { roomStateRef.current = roomState; }, [roomState]);
 
-  // invite link: ?room=CODE on first load → drop straight into join-by-invite mode
+  
   useEffect(() => {
     const code = new URLSearchParams(window.location.search).get("room");
     if (code) setInviteCode(code.toUpperCase());
   }, []);
 
   useEffect(() => {
-    const socket = io(process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:3001");
-    socketRef.current = socket;
-    setPlayerId(getPermanentPlayerId());
-    socket.on("connect", () => {
-      setStatus("connected");
-      setSocketId(socket.id ?? "(unknown)");
-      addLog(`connected with id ${socket.id}`);
-      const rs = roomStateRef.current;
-      if (rs) {
+    let cancelled = false;
 
-        const me = rs.players.find((p) => p.id === getPermanentPlayerId());
-        socket.emit("join_room", { id: getPermanentPlayerId(), name: me?.name ?? "Player", code: rs.roomId }, (res: RoomResponse) => {
-          if (res.success && res.room) setRoomState(res.room);
-        });
-        setDisconnected(false);
-        addSystem("reconnected");
-      } else {
-        addSystem("connected");
-      }
-    });
+    (async () => {
+     
+      const meRes = await fetch(`${SERVER}/api/me`, { credentials: "include" });
+      const meJson = await meRes.json();
+      if (cancelled) return;
+      const myId: string = meJson.playerId;
+      setPlayerId(myId);
 
-    socket.on("disconnect", () => {
-      setStatus("disconnected");
-      addLog("disconnected");
-      // only surface the overlay if we were actually in a room (not on first load)
-      if (roomStateRef.current) {
-        setDisconnected(true);
-        addSystem("connection lost — reconnecting…");
-      }
-    });
+      const socket = io(SERVER, { withCredentials: true });
+      socketRef.current = socket;
+      socket.on("connect", () => {
+        setStatus("connected");
+        setSocketId(socket.id ?? "(unknown)");
+        addLog(`connected with id ${socket.id}`);
+        const rs = roomStateRef.current;
+        if (rs) {
 
-    socket.on("pong", (counter) => {
-      addLog(`server response: ${JSON.stringify(counter)}`);
-    });
-    socket.on("room_update", (room: RoomState) => setRoomState(room));
-    socket.on("system_message", (msg: string) => addLog(msg));
+          const me = rs.players.find((p) => p.id === myId);
+          socket.emit("join_room", { name: me?.name ?? "Player", code: rs.roomId }, (res: RoomResponse) => {
+            if (res.success && res.room) setRoomState(res.room);
+          });
+          setDisconnected(false);
+          addSystem("reconnected");
+        } else {
+          addSystem("connected");
+        }
+      });
 
-    socket.on("chat_message", (m: ChatMessage) => setMessages((prev) => [...prev, m]));
-    socket.on("word_meta", (m: Record<string, string[]>) => setWordLists(m));
-    socket.on("player_count", (n: number) => setPlayerCount(n));
+      socket.on("disconnect", () => {
+        setStatus("disconnected");
+        addLog("disconnected");
+        // only surface the overlay if we were actually in a room (not on first load)
+        if (roomStateRef.current) {
+          setDisconnected(true);
+          addSystem("connection lost — reconnecting…");
+        }
+      });
+
+      socket.on("pong", (counter) => {
+        addLog(`server response: ${JSON.stringify(counter)}`);
+      });
+      socket.on("room_update", (room: RoomState) => setRoomState(room));
+      socket.on("system_message", (msg: string) => addLog(msg));
+
+      socket.on("chat_message", (m: ChatMessage) => setMessages((prev) => [...prev, m]));
+      socket.on("word_meta", (m: Record<string, string[]>) => setWordLists(m));
+      socket.on("player_count", (n: number) => setPlayerCount(n));
+    })();
+
     return () => {
-      socket.disconnect();
+      cancelled = true;
+      socketRef.current?.disconnect();
+      socketRef.current = null;
     };
-
   }, []);
 
   // reconnect countdown for the overlay's "Reconnect (N)" label
@@ -130,7 +132,7 @@ export default function Home() {
     }
     addLog(`Creating room for ${name}...`);
 
-    socket.emit("create_room", { id: getPermanentPlayerId(), name }, (res: RoomResponse) => {
+    socket.emit("create_room", { name }, (res: RoomResponse) => {
       if (res.success) {
         setJoinFail(null);
         setRoomState(res.room ?? null)
@@ -147,7 +149,7 @@ export default function Home() {
     }
     addLog(`${name} attempting to join room: ${code}...`);
 
-    socket.emit("join_room", { id: getPermanentPlayerId(), name, code }, (res: RoomResponse) => {
+    socket.emit("join_room", { name, code }, (res: RoomResponse) => {
       if (res.success) {
         setJoinFail(null);
         setRoomState(res.room ?? null)
@@ -166,7 +168,7 @@ export default function Home() {
     const socket = socketRef.current;
     if (!socket || !roomState) return;               // guard: need socket + a room
     socket.emit("leave_room",
-      { id: getPermanentPlayerId(), roomId: roomState.roomId },
+      { roomId: roomState.roomId },
       () => { setDisconnected(false); setRoomState(null); }   // ← back to JoinScreen
     );
   };

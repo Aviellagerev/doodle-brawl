@@ -43,22 +43,39 @@ const start = async () => {
 
     await app.listen({ port: config.port, host: config.host });
     const io = new Server(app.server, {
-        cors: { origin: config.corsOrigin === "*" ? true : config.corsOrigin },
+        cors: {
+            origin: config.corsOrigin === "*" ? true : config.corsOrigin,
+            credentials: true,
+        },
     });
 
+
+    io.use(async (socket, next) => {
+        try {
+            const header = socket.handshake.headers.cookie;
+            const raw = header ? app.parseCookie(header).sid : undefined;
+            const playerId = raw ? await verifySession(raw) : null;
+            if (!playerId) return next(new Error("unauthorized"));
+            socket.data.playerId = playerId;
+            next();
+        }
+        catch (err) {
+            app.log.error({ err }, "handshake auth failed");
+            next(new Error("unauthorized"));
+        }
+
+    });
+
+
     io.on("connection", (socket) => {
-        installSocketGuard(socket, app.log);      // structured logging + rate limiting
+        installSocketGuard(socket, app.log);
         registerRoomHandlers(io, socket, roomStore);
     });
 
-    // heartbeat: refresh the live player count for everyone every 30s, so it
-    // stays accurate even after room expiries the event hooks don't observe.
     setInterval(() => broadcastPlayerCount(io, roomStore, app.log), 30_000);
 };
 start();
 
-// Release the port and connections cleanly on Ctrl+C / stop, so the server
-// doesn't linger and hold :3001 between restarts.
 const shutdown = async () => {
     console.log("shutting down...");
     try {
