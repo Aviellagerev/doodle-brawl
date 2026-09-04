@@ -5,6 +5,8 @@ import { redis } from "./redis.js";
 import { pool } from "./db.js"
 import { registerRoomHandlers } from "./handlers/roomHandlers.js"
 import { config } from "./config.js";
+import cors from "@fastify/cors";
+import cookie from "@fastify/cookie";
 import { installSocketGuard, broadcastPlayerCount } from "./observability.js";
 const roomStore = new RoomStore(redis);
 const app = Fastify({ logger: true });
@@ -12,6 +14,13 @@ app.get("/health", async () => ({ ok: true }));
 const start = async () => {
     const r = await pool.query("SELECT now()");
     console.log("🟢 Connected to Postgres:", r.rows[0].now);
+        await app.register(cookie);
+    await app.register(cors, {
+        origin: config.corsOrigin,
+        credentials: true,
+    });
+    //need to throw routes of cookies here;
+    
     await app.listen({ port: config.port, host: config.host });
     const io = new Server(app.server, {
         cors: { origin: config.corsOrigin === "*" ? true : config.corsOrigin },

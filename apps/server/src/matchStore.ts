@@ -83,6 +83,16 @@ export async function saveMatch(log: MatchLog): Promise<string> {
 
 
         }
+        for (const e of log.chat) {
+            const turnId =
+                e.round === null ? null : turnIds.get(`${e.round}:${e.drawerId}`) ?? null;
+
+            await client.query(
+                `INSERT INTO match_chat (match_id, turn_id, player_id, display_name, text, kind, at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+                [matchId, turnId, e.msg.playerId ?? null, e.msg.author, e.msg.text, e.msg.kind, new Date(e.at)],
+            );
+        }
 
 
         await client.query("COMMIT");
