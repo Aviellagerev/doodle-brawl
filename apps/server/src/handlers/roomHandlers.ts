@@ -8,6 +8,7 @@ import {
     toScoring, guessPoints, drawerBonus, allGuessed, advanceTurn, revealHintLetter,
     scaleByDifficulty,
 } from "../game/skribbl.js";
+import { startMatch, startTurn, logGuess, closeTurn, takeMatch, forgetMatch } from "../matchLog.js";
 import { WORD_LISTS } from "../game/words.js";
 import { broadcastPlayerCount } from "../observability.js";
 
@@ -15,18 +16,11 @@ const TIMEOUT_TIMER = 60_000;
 
 const disconectTimers = new Map<string,NodeJS.Timeout>();
 const roundTimers = new Map<string, NodeJS.Timeout>();
-// the CURRENT turn's drawing, per room, so we can replay it to anyone who joins
-// or reconnects mid-draw. Reset each turn; grows with strokes, shrinks on undo/clear.
 const drawHistory = new Map<string, DrawEntry[]>();
-// the MATCH's chat, per room. Unlike drawHistory (reset each turn) this spans a
-// whole match: reset when a game starts, persisted when it ends. Capped, because
-// chat is attacker-controlled and now ends up on disk.
+
 const MAX_CHAT_ENTRIES = 2000;
 const chatHistory = new Map<string, ChatEntry[]>();
 
-// Single funnel for every chat line: record it for the match history, then emit.
-// ALL chat must go through here — there are five call sites, and one that skips
-// this silently drops history with nothing to catch it at compile time.
 function say(io: Server, roomId: string, msg: ChatMessage, game?: GameState | null) {
     const hist = chatHistory.get(roomId) ?? [];
     if (hist.length < MAX_CHAT_ENTRIES) {
@@ -41,8 +35,6 @@ function say(io: Server, roomId: string, msg: ChatMessage, game?: GameState | nu
     io.to(roomId).emit("chat_message", msg);
 }
 
-// a room with no players left is gone from Redis — drop its buffers too, or the
-// Maps grow forever with dead rooms.
 function forgetRoom(roomId: string) {
     chatHistory.delete(roomId);
     drawHistory.delete(roomId);

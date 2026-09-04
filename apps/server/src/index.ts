@@ -2,6 +2,7 @@ import Fastify from "fastify";
 import { Server } from "socket.io";
 import { RoomStore } from "./roomStore.js"
 import { redis } from "./redis.js";
+import { pool } from "./db.js"
 import { registerRoomHandlers } from "./handlers/roomHandlers.js"
 import { config } from "./config.js";
 import { installSocketGuard, broadcastPlayerCount } from "./observability.js";
@@ -9,10 +10,10 @@ const roomStore = new RoomStore(redis);
 const app = Fastify({ logger: true });
 app.get("/health", async () => ({ ok: true }));
 const start = async () => {
+    const r = await pool.query("SELECT now()");
+    console.log("🟢 Connected to Postgres:", r.rows[0].now);
     await app.listen({ port: config.port, host: config.host });
     const io = new Server(app.server, {
-        // "*" (default in dev) reflects any origin so LAN devices connect; in
-        // production CORS_ORIGIN pins it to the web domain.
         cors: { origin: config.corsOrigin === "*" ? true : config.corsOrigin },
     });
 
@@ -33,6 +34,7 @@ const shutdown = async () => {
     console.log("shutting down...");
     try {
         await app.close();      // closes the HTTP + Socket.IO server, frees the port
+        await pool.end();
         redis.disconnect();     // closes the Redis connection
     } finally {
         process.exit(0);

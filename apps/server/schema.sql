@@ -52,6 +52,7 @@ CREATE TABLE match_turns (
   turn_id     BIGSERIAL PRIMARY KEY,
   match_id    UUID NOT NULL REFERENCES matches(match_id) ON DELETE CASCADE,
   round       INT  NOT NULL,
+  drawer_points INT NOT NULL DEFAULT 0,
   turn_index  INT  NOT NULL,
   drawer_id   UUID NOT NULL REFERENCES players(id),
   word        TEXT NOT NULL,
