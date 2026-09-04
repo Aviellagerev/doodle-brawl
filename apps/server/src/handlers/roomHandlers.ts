@@ -8,9 +8,10 @@ import {
     toScoring, guessPoints, drawerBonus, allGuessed, advanceTurn, revealHintLetter,
     scaleByDifficulty,
 } from "../game/skribbl.js";
-import { startMatch, startTurn, logGuess, closeTurn, takeMatch, forgetMatch } from "../matchLog.js";
+import { startMatch, startTurn, logGuess, logChat, closeTurn, takeMatch, forgetMatch } from "../matchLog.js";
 import { WORD_LISTS } from "../game/words.js";
 import { broadcastPlayerCount } from "../observability.js";
+import { saveMatch } from "../matchStore.js";
 
 const TIMEOUT_TIMER = 60_000;
 
@@ -18,25 +19,17 @@ const disconectTimers = new Map<string, NodeJS.Timeout>();
 const roundTimers = new Map<string, NodeJS.Timeout>();
 const drawHistory = new Map<string, DrawEntry[]>();
 
-const MAX_CHAT_ENTRIES = 2000;
-const chatHistory = new Map<string, ChatEntry[]>();
-
 function say(io: Server, roomId: string, msg: ChatMessage, game?: GameState | null) {
-    const hist = chatHistory.get(roomId) ?? [];
-    if (hist.length < MAX_CHAT_ENTRIES) {
-        hist.push({
-            msg,
-            at: Date.now(),
-            round: game?.round ?? null,
-            drawerId: game?.currentDrawerId ?? null,
-        });
-        chatHistory.set(roomId, hist);
-    }
+    logChat(roomId, {
+        msg,
+        at: Date.now(),
+        round: game?.round ?? null,
+        drawerId: game?.currentDrawerId ?? null,
+    });
     io.to(roomId).emit("chat_message", msg);
 }
 
 function forgetRoom(roomId: string) {
-    chatHistory.delete(roomId);
     drawHistory.delete(roomId);
     forgetMatch(roomId);
 }
@@ -146,7 +139,15 @@ async function advanceRound(io: Server, roomStore: RoomStore, roomId: string) {
         await roomStore.saveRoom(room);
         broadcastRoom(io, room);
         const log = takeMatch(roomId, room.players, Date.now());
-        console.log(JSON.stringify(log, null, 2));  
+        if (log) {
+            try {
+                const id = await saveMatch(log);
+                console.log(`match ${id} saved`);
+            } catch (err) {
+                console.error("match history save failed", err);
+            }
+        }
+
         return;
     }
 
@@ -185,7 +186,7 @@ async function commitWord(io: Server, roomStore: RoomStore, roomId: string, word
     if (!room || !room.game || room.game.phase !== "choosing") return;
     const now = Date.now();
     room.game = chooseWord(room.game, word, now, room.settings.drawTimeMs);
-    startTurn(roomId,room.game);
+    startTurn(roomId, room.game);
     drawHistory.set(roomId, []);   // fresh canvas for the new turn
     await roomStore.saveRoom(room);
     broadcastRoom(io, room); // drawer keeps the real word, guessers get blanks
@@ -354,8 +355,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
             const game = createInitialGame(host.id);
             const updated = await roomStore.startGame(roomId, game);
             if (!updated) return;
-            chatHistory.set(roomId, []);   // fresh chat log for this match
-            startMatch(roomId,updated);
+            startMatch(roomId, updated);
             // fresh petty-awards tallies for the new game
             updated.stats = { guessMs: {}, wrong: {}, doodle: {} };
             await roomStore.saveRoom(updated);

@@ -1,5 +1,5 @@
 import {
-  RoomState, GameState, Player, RoomSettings, DrawEntry, Difficulty,
+  RoomState, GameState, Player, RoomSettings, DrawEntry, Difficulty, ChatEntry,
 } from "../../../packages/shared/index.js";
 
 export interface GuessLog {
@@ -33,8 +33,10 @@ export interface MatchLog {
   settings: RoomSettings;
   turns: TurnLog[];
   participants: ParticipantLog[];
+  chat: ChatEntry[];
 }
 
+const MAX_CHAT_ENTRIES = 2000;
 const matchLogs = new Map<string, MatchLog>();
 
 function currentTurn(roomId: string): TurnLog | null {
@@ -51,7 +53,14 @@ export function startMatch(roomId: string, room: RoomState): void {
     settings: { ...room.settings },
     turns: [],
     participants: [],
+    chat: [],
   });
+}
+
+export function logChat(roomId: string, entry: ChatEntry): void {
+  const log = matchLogs.get(roomId);
+  if (!log || log.chat.length >= MAX_CHAT_ENTRIES) return;
+  log.chat.push(entry);
 }
 
 export function startTurn(roomId: string, game: GameState): void {
