@@ -14,7 +14,7 @@ import { broadcastPlayerCount } from "../observability.js";
 
 const TIMEOUT_TIMER = 60_000;
 
-const disconectTimers = new Map<string,NodeJS.Timeout>();
+const disconectTimers = new Map<string, NodeJS.Timeout>();
 const roundTimers = new Map<string, NodeJS.Timeout>();
 const drawHistory = new Map<string, DrawEntry[]>();
 
@@ -38,6 +38,7 @@ function say(io: Server, roomId: string, msg: ChatMessage, game?: GameState | nu
 function forgetRoom(roomId: string) {
     chatHistory.delete(roomId);
     drawHistory.delete(roomId);
+    forgetMatch(roomId);
 }
 
 // record a freehand segment into the room's history, grouped into a stroke by strokeId
@@ -48,7 +49,7 @@ function recordSeg(roomId: string, seg: DrawSegment) {
     else hist.push({ kind: "stroke", id: seg.strokeId ?? 0, segs: [seg] });
     drawHistory.set(roomId, hist);
 }
-function stampT(game: GameState): number | undefined{
+function stampT(game: GameState): number | undefined {
     return game.turnStartedAt ? Date.now() - game.turnStartedAt : undefined;
 }
 // separate from the phase timer: fires the gradual letter reveals during drawing
@@ -125,8 +126,7 @@ async function finishRound(io: Server, roomStore: RoomStore, roomId: string) {
     if (!room || !room.game || room.game.phase !== "drawing") return;
     finalizePayout(room.game, room.players);
     const h = drawHistory.get(roomId) ?? [];
-console.log("t:", h.flatMap(e => e.kind === "stroke" ? e.segs.map(s => s.t) : [e.op.t]));
-
+    closeTurn(roomId, room.players, h);
     room.game = toScoring(room.game);
     room.game.endsAt = Date.now() + SCORING_DELAY_MS;   // deadline for the scoreboard countdown
     await roomStore.saveRoom(room);
@@ -142,14 +142,14 @@ async function advanceRound(io: Server, roomStore: RoomStore, roomId: string) {
     const result = advanceTurn(room.game, room.players, room.settings.rounds);
     room.game = result.game;
     if (result.done) {
-        room.status = "finished";            // → victory screen
+        room.status = "finished";
         await roomStore.saveRoom(room);
         broadcastRoom(io, room);
-        // TODO(match-history): the match is complete here — persist chatHistory
-        // and the per-turn replays to Postgres, then clear the buffers. Until then
-        // they're held until the next start_game resets them.
+        const log = takeMatch(roomId, room.players, Date.now());
+        console.log(JSON.stringify(log, null, 2));  
         return;
     }
+
     await roomStore.saveRoom(room);
     broadcastRoom(io, room);
     await offerWords(io, roomStore, room);    // set up the new drawer's choosing phase
@@ -185,6 +185,7 @@ async function commitWord(io: Server, roomStore: RoomStore, roomId: string, word
     if (!room || !room.game || room.game.phase !== "choosing") return;
     const now = Date.now();
     room.game = chooseWord(room.game, word, now, room.settings.drawTimeMs);
+    startTurn(roomId,room.game);
     drawHistory.set(roomId, []);   // fresh canvas for the new turn
     await roomStore.saveRoom(room);
     broadcastRoom(io, room); // drawer keeps the real word, guessers get blanks
@@ -253,12 +254,12 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
             isHost: false,
         })
         const timer = disconectTimers.get(data.id);
-         if (timer) { clearTimeout(timer); disconectTimers.delete(data.id); } 
-         //stop and reconect (disconnect doesnt remove player (aka fixed no host bug))
+        if (timer) { clearTimeout(timer); disconectTimers.delete(data.id); }
+        //stop and reconect (disconnect doesnt remove player (aka fixed no host bug))
         try {
             const existing = await roomStore.getRoom(roomId);
             if (existing) {
-            //rmove the timer here ?
+                //rmove the timer here ?
                 const rejoining = existing.players.some((p) => p.id === newPlayer.id);
                 if (!rejoining && existing.players.length >= existing.settings.maxPlayers) {
                     callback({ success: false, error: "Room is full." });
@@ -332,7 +333,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
             finally {
                 disconectTimers.delete(playerId);
             }
-        },TIMEOUT_TIMER))
+        }, TIMEOUT_TIMER))
 
 
     });
@@ -354,7 +355,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
             const updated = await roomStore.startGame(roomId, game);
             if (!updated) return;
             chatHistory.set(roomId, []);   // fresh chat log for this match
-
+            startMatch(roomId,updated);
             // fresh petty-awards tallies for the new game
             updated.stats = { guessMs: {}, wrong: {}, doodle: {} };
             await roomStore.saveRoom(updated);
@@ -418,7 +419,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
 
         // relay to everyone else in the room (socket.to excludes the sender)
         socket.to(roomId).emit("draw", segment);
-        recordSeg(roomId, { ...segment, t :stampT(room.game)});   // keep the turn's canvas for late joiners
+        recordSeg(roomId, { ...segment, t: stampT(room.game) });   // keep the turn's canvas for late joiners
     });
     // shape/fill tool ops (line/rect/ellipse/fill) — relayed exactly like "draw"
     socket.on("draw_op", async (op: DrawOp) => {
@@ -428,13 +429,13 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
         if (!room || !room.game) return;
         if (socket.data.playerId !== room.game.currentDrawerId) return; // drawer only
         socket.to(roomId).emit("draw_op", op);
-        
+
         const h = drawHistory.get(roomId) ?? [];
         console.log(h.map(e => e.kind === "stroke"
-  ? `stroke×${e.segs.length}@${e.segs[0]?.t}`
-  : `op:${e.op.kind}@${e.op.t}`));
+            ? `stroke×${e.segs.length}@${e.segs[0]?.t}`
+            : `op:${e.op.kind}@${e.op.t}`));
 
-        h.push({ kind: "op", id: op.strokeId ?? 0, op:{...op,t:stampT(room.game)}});
+        h.push({ kind: "op", id: op.strokeId ?? 0, op: { ...op, t: stampT(room.game) } });
         drawHistory.set(roomId, h);
     });
     socket.on("clear", async () => {
@@ -492,8 +493,9 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
                 const pts = scaleByDifficulty(guessPoints(timeLeft, room.settings.drawTimeMs), game.wordDifficulty);
                 player.score = (player.score ?? 0) + pts;
                 const drawer = room.players.find((p) => p.id === game.currentDrawerId);
-                if (drawer) drawer.score = (drawer.score ?? 0) + drawerBonus(pts);
-                // record this guesser's payout line (first correct guesser is flagged)
+                const bonus = drawerBonus(pts);
+                if (drawer) drawer.score = (drawer.score ?? 0) + bonus;
+                logGuess(roomId, player.id, elapsedMs, pts, bonus);
                 const isFirst = game.guessedIds.length === 0;
                 (game.payout ??= []).push({
                     playerId: player.id,
@@ -523,7 +525,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
                 }
                 return;
             }
-  
+
             if (!isDrawer && !already) {
                 const stats = (room.stats ??= { guessMs: {}, wrong: {}, doodle: {} });
                 stats.wrong[player.id] = (stats.wrong[player.id] ?? 0) + 1;
@@ -532,7 +534,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
             }
         }
 
-     
+
         const message: ChatMessage = { author: player.name, text, kind: "chat", playerId: player.id };
         say(io, roomId, message, room.game);   // records for history, then emits to everyone
     });

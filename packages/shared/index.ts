@@ -102,11 +102,9 @@ export interface GameState {
   // per-letter reveal shown to guessers: "" = hidden, " " = space, else the letter.
   // Only ever holds revealed letters (safe to broadcast); null outside "drawing".
   hint: string[] | null;
-  // Per-turn score breakdown for the "Round N payout" scoring screen.
-  // null during "choosing"; [] once "drawing" starts, filled as players guess;
-  // finalized (drawer bonus + missed players appended) when the turn ends.
+  
   payout: PayoutEntry[] | null;
-  turnStartedAt: number | null;   // epoch ms when the phase became "drawing"
+  turnStartedAt: number | null;  
 
 }
 
@@ -119,13 +117,11 @@ export interface DrawSegment{
   to:Point;
   color:string;
   width:number;
-  erase?:boolean;   // eraser stroke — receivers clear instead of paint
-  strokeId?:number; // groups segments of one pointer-down..up stroke (for undo)
+  erase?:boolean; 
+  strokeId?:number; 
   t?:number //ms since turn start (present in replayed only)
 }
-// A single committed shape/fill operation from the drawer's tools (line/rect/
-// ellipse/fill). Relayed drawer→room like DrawSegment. For "fill", `from` is the
-// seed point (`to` is unused).
+
 export interface DrawOp {
   kind: "line" | "rect" | "ellipse" | "fill";
   from: Point;
@@ -135,9 +131,7 @@ export interface DrawOp {
   strokeId?: number;   // groups this op with the current stroke (for undo)
    t?:number
 }
-// One entry in the current turn's drawing history: either a freehand stroke (its
-// segments) or a single committed op. The server keeps an ordered list of these
-// per room and replays them to anyone who joins mid-draw ("canvas_state" event).
+
 export type DrawEntry =
   | { kind: "stroke"; id: number; segs: DrawSegment[] }
   | { kind: "op"; id: number; op: DrawOp };
@@ -145,19 +139,12 @@ export interface ChatMessage {
   author: string;
   text: string;
   kind: "chat" | "system" | "correct";   // correct = someone guessed the word
-  // Who said it. Absent on genuine System lines (join/leave). Present even on the
-  // "X guessed the word!" System line, so guesses stay attributable without
-  // parsing the sentence.
   playerId?: string;
 }
 
-// Longest chat message accepted. Chat is attacker-controlled AND persisted, so
-// this is a storage bound, not just a UI nicety.
 export const MAX_CHAT_LEN = 200;
 
-// One recorded chat line. Stored only — never sent over the wire. `at` is an
-// absolute instant rather than an offset because lobby chat has no turn to be
-// relative to; the offset is derived at replay time from the turn's start.
+
 export interface ChatEntry {
   msg: ChatMessage;
   at: number;                // epoch ms
