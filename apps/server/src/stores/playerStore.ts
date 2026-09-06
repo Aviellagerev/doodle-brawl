@@ -1,4 +1,5 @@
 import { pool } from "../db.js";
+import { UserRow } from "./userStore.js";
 
 export interface PlayerRow {
   id: string;
@@ -32,4 +33,11 @@ export async function renamePlayer(id: string, displayName: string): Promise<voi
     `UPDATE players SET display_name = $2 WHERE id = $1`,
     [id, displayName],
   );
+}
+export async function claimPlayer(playerId:string,userId:string ): Promise<boolean>{
+   const r = await pool.query(
+    `UPDATE players SET user_id = $2 WHERE id = $1 AND user_id IS NULL`,
+    [playerId, userId],
+  );
+   return r.rowCount === 1;
 }
