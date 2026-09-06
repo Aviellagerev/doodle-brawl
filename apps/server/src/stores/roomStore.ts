@@ -1,6 +1,6 @@
 
 import { Redis } from "ioredis";
-import { RoomState, Player ,GameState} from "../../../packages/shared/index.js";
+import { RoomState, Player ,GameState} from "../../../../packages/shared/index.js";
 
 export class RoomStore {
   constructor(private redis: Redis) { }

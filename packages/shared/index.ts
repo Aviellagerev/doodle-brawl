@@ -144,8 +144,7 @@ export interface ChatMessage {
 
 export const MAX_CHAT_LEN = 200;
 
-// Longest display name accepted. Names are attacker-controlled and now reach
-// Postgres as well as Redis and every broadcast.
+
 export const MAX_NAME_LEN = 24;
 
 
@@ -154,4 +153,7 @@ export interface ChatEntry {
   at: number;                // epoch ms
   round: number | null;      // null outside a game
   drawerId: string | null;   // with `round`, identifies the turn
+}
+export function cleanName(v: unknown): string {
+    return String(v ?? "").trim().slice(0, MAX_NAME_LEN) || "Player";
 }

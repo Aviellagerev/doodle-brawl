@@ -1,7 +1,7 @@
 
 import type { FastifyBaseLogger } from "fastify";
 import type { Server, Socket } from "socket.io";
-import type { RoomStore } from "./roomStore.js";
+import type { RoomStore } from "./stores/roomStore.js";
 
 
 export function clientIp(socket: Socket): string {

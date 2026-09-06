@@ -1,6 +1,6 @@
 import { gzipSync } from "node:zlib";
-import { pool } from "./db.js";
-import { MatchLog } from "./matchLog.js";
+import { pool } from "../db.js";
+import { MatchLog } from "../matchLog.js";
 function collectPlayers(log: MatchLog): Map<string, string> {
     const tempPlayer = new Map<string, string>(
         log.participants.map(p => [p.playerId, p.displayName])

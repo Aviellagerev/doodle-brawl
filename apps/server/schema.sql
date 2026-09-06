@@ -60,7 +60,13 @@ CREATE TABLE match_turns (
   UNIQUE (match_id, round, drawer_id)
 );
 
-CREATE TABLE turn_guesses (
+CREATE TABLE turn_ {{gggggggfgggggggggafsaaafg
+
+ffssssfa
+
+fsaaaaaasd
+
+} (
   turn_id      BIGINT NOT NULL REFERENCES match_turns(turn_id) ON DELETE CASCADE,
   player_id    UUID   NOT NULL REFERENCES players(id),
   ms_to_guess  INT,

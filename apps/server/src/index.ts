@@ -1,6 +1,6 @@
 import Fastify from "fastify";
 import { Server } from "socket.io";
-import { RoomStore } from "./roomStore.js"
+import { RoomStore } from "./stores/roomStore.js"
 import { redis } from "./redis.js";
 import { pool } from "./db.js"
 import { registerRoomHandlers } from "./handlers/roomHandlers.js"
@@ -8,8 +8,8 @@ import { config } from "./config.js";
 import cors from "@fastify/cors";
 import cookie from "@fastify/cookie";
 import { installSocketGuard, broadcastPlayerCount } from "./observability.js";
-import { issueSession, verifySession } from "./sessionStore.js";
-import { getPlayer, createGuest, } from "./playerStore.js";
+import { issueSession, verifySession } from "./stores/sessionStore.js";
+import { getPlayer, createGuest, } from "./stores/playerStore.js";
 const roomStore = new RoomStore(redis);
 const app = Fastify({ logger: true });
 app.get("/health", async () => ({ ok: true }));

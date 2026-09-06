@@ -1,5 +1,5 @@
 import { randomBytes, createHash } from "node:crypto";
-import { pool } from "./db.js";
+import { pool } from "../db.js";
 
 const SESSION_DAYS = 180;
 function newToken(): string{

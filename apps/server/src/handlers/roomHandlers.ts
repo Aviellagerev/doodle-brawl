@@ -1,6 +1,6 @@
 import { Server, Socket } from "socket.io";
-import { RoomStore } from "../roomStore.js";
-import { DrawSegment, DrawOp, DrawEntry, ChatMessage, ChatEntry, MAX_CHAT_LEN, MAX_NAME_LEN, PayoutEntry } from "../../../../packages/shared/index.js";
+import { RoomStore } from "../stores/roomStore.js";
+import { DrawSegment, DrawOp, DrawEntry, ChatMessage, ChatEntry, MAX_CHAT_LEN, MAX_NAME_LEN, PayoutEntry,cleanName } from "../../../../packages/shared/index.js";
 import { RoomState, Player, RoomSettings, GameState, CHOOSE_TIME_MS, SCORING_DELAY_MS } from "../../../../packages/shared/index.js";
 import { createNewRoom, createNewPlayer } from "./../services/roomServices.js";
 import {
@@ -9,10 +9,10 @@ import {
     scaleByDifficulty,
 } from "../game/skribbl.js";
 import { startMatch, startTurn, logGuess, logChat, closeTurn, takeMatch, forgetMatch } from "../matchLog.js";
-import { renamePlayer } from "../playerStore.js";
+import { renamePlayer } from "../stores/playerStore.js";
 import { WORD_LISTS } from "../game/words.js";
 import { broadcastPlayerCount } from "../observability.js";
-import { saveMatch } from "../matchStore.js";
+import { saveMatch } from "../stores/matchStore.js";
 
 const TIMEOUT_TIMER = 60_000;
 
@@ -198,9 +198,7 @@ async function commitWord(io: Server, roomStore: RoomStore, roomId: string, word
 
 // Clamp an incoming (untrusted) setting value into a sane range.
 // names are attacker-controlled: bound the length, and never let a blank one through
-function cleanName(v: unknown): string {
-    return String(v ?? "").trim().slice(0, MAX_NAME_LEN) || "Player";
-}
+
 
 function clamp(v: unknown, min: number, max: number, fallback: number): number {
     const n = typeof v === "number" && Number.isFinite(v) ? v : fallback;
