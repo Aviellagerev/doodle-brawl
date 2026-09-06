@@ -4,13 +4,19 @@ import type { Server, Socket } from "socket.io";
 import type { RoomStore } from "./stores/roomStore.js";
 
 
-export function clientIp(socket: Socket): string {
-  const h = socket.handshake.headers;
+export function ipFromHeaders(
+  h: Record<string, string | string[] | undefined>,
+  fallback: string,
+): string {
   const cf = h["cf-connecting-ip"];
   if (typeof cf === "string" && cf) return cf;
   const xff = h["x-forwarded-for"];
   if (typeof xff === "string" && xff) return xff.split(",")[0].trim();
-  return socket.handshake.address;
+  return fallback;
+}
+
+export function clientIp(socket: Socket): string {
+  return ipFromHeaders(socket.handshake.headers, socket.handshake.address);
 }
 
 

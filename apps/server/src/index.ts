@@ -8,7 +8,8 @@ import { config } from "./config.js";
 import { authRoutes } from "./routes/authRoutes.js";
 import cors from "@fastify/cors";
 import cookie from "@fastify/cookie";
-import { installSocketGuard, broadcastPlayerCount } from "./observability.js";
+import rateLimit from "@fastify/rate-limit";
+import { installSocketGuard, broadcastPlayerCount, ipFromHeaders } from "./observability.js";
 import { verifySession } from "./stores/sessionStore.js";
 const roomStore = new RoomStore(redis);
 const app = Fastify({ logger: true });
@@ -20,6 +21,11 @@ const start = async () => {
     await app.register(cors, {
         origin: config.corsOrigin,
         credentials: true,
+    });
+    await app.register(rateLimit, {
+        global: false,
+        redis,
+        keyGenerator: (req) => ipFromHeaders(req.headers, req.ip),
     });
     await app.register(authRoutes);
 

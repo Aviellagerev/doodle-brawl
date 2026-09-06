@@ -41,3 +41,13 @@ export async function claimPlayer(playerId:string,userId:string ): Promise<boole
   );
    return r.rowCount === 1;
 }
+export async function findPlayerForUser(userId: string): Promise<PlayerRow | null> {
+  const r = await pool.query(
+    `SELECT id, display_name, user_id FROM players
+      WHERE user_id = $1
+      ORDER BY created_at DESC
+      LIMIT 1`,
+    [userId],
+  );
+  return r.rows[0] ? toPlayer(r.rows[0]) : null;
+}

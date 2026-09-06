@@ -1,7 +1,7 @@
 
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { issueSession, verifySession, revokeSession } from "../stores/sessionStore.js";
-import { getPlayer, createGuest, claimPlayer, renamePlayer } from "../stores/playerStore.js";
+import { getPlayer, createGuest, claimPlayer, renamePlayer, findPlayerForUser } from "../stores/playerStore.js";
 import { createUser, verifyCredentials } from "../stores/userStore.js";
 
 const COOKIE_OPTS = {
@@ -40,7 +40,9 @@ export async function authRoutes(app: FastifyInstance) {
 
 
 
-    app.post("/api/signup", async (req, reply) => {
+    app.post("/api/signup", {
+        config: { rateLimit: { max: 5, timeWindow: "1 hour" } },
+    }, async (req, reply) => {
 
 
         const raw = req.cookies.sid;
@@ -94,4 +96,48 @@ export async function authRoutes(app: FastifyInstance) {
         await startSession(reply, playerId);            // rotate: session fixation
         return reply.status(201).send({ playerId, user: k });
     })
+
+    app.post("/api/login", {
+        config: { rateLimit: { max: 8, timeWindow: "15 minutes" } },
+    }, async (req, reply) => {
+        const { email, password } = (req.body ?? {}) as Record<string, string | undefined>;
+        if (!email || !password) {
+            return reply.status(400).send({
+                statusCode: 400,
+                error: "Bad Request",
+                message: "Email and password are required.",
+            });
+        }
+
+        const user = await verifyCredentials(email, password);
+        if (!user) {
+            return reply.status(401).send({
+                statusCode: 401,
+                error: "Unauthorized",
+                message: "Invalid email or password.",
+            });
+        }
+
+        const existing = await findPlayerForUser(user.id);
+        let playerId: string;
+        if (existing) {
+            playerId = existing.id;
+        } else {
+            const fresh = await createGuest(user.username ?? "Player");
+            await claimPlayer(fresh.id, user.id);
+            playerId = fresh.id;
+        }
+
+        await startSession(reply, playerId);
+        return { playerId, user };
+    });
+
+    app.post("/api/logout", async (req, reply) => {
+        const raw = req.cookies.sid;
+        if (raw) await revokeSession(raw);
+
+        const fresh = await createGuest("Guest");
+        await startSession(reply, fresh.id);
+        return { playerId: fresh.id, displayName: fresh.displayName };
+    });
 }

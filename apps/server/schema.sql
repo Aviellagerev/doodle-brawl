@@ -20,7 +20,7 @@ CREATE TABLE users (
 CREATE TABLE players (
   id            UUID        PRIMARY KEY,
   display_name  TEXT        NOT NULL,
-  user_id       UUID        REFERENCES users(id),
+  user_id       UUID        REFERENCES users(id) ON DELETE SET NULL,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
