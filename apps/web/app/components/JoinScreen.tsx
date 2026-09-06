@@ -2,17 +2,25 @@
 
 import { useState } from "react";
 import ThemeToggle from "./ThemeToggle";
+import AuthPanel from "./AuthPanel";
 import { initialsOf, colorOf } from "../lib/avatar";
+import type { PublicUser } from "../../../../packages/shared";
 
 type JoinScreenProps = {
   onCreate: (name: string) => void;
   onJoin: (name: string, code: string) => void;
-  playerCount?: number | null;   // live count of players currently in rooms
-  joinError?: string | null;     // server-side error to show inline (e.g. "room not found"); cleared by the parent
-  inviteCode?: string | null;    // set from a ?room=CODE invite link → compact join-by-invite mode
+  playerCount?: number | null;
+  joinError?: string | null;
+  inviteCode?: string | null;
+  user?: PublicUser | null;      // null = playing as a guest
+  authError?: string | null;
+  onSignup: (email: string, password: string, username: string) => void | Promise<void>;
+  onLogin: (email: string, password: string) => void | Promise<void>;
+  onLogout: () => void | Promise<void>;
 };
 
-export default function JoinScreen({ onCreate, onJoin, playerCount, joinError, inviteCode }: JoinScreenProps) {
+
+export default function JoinScreen({ onCreate, onJoin, playerCount, joinError, inviteCode, user, authError, onSignup, onLogin, onLogout }: JoinScreenProps) {
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
   const [blob, setBlob] = useState(0);      // reroll counter for the avatar colour
@@ -77,6 +85,16 @@ export default function JoinScreen({ onCreate, onJoin, playerCount, joinError, i
           >
             up to 12 per room
           </span>
+        </div>
+
+        <div className="mt-7 max-w-[380px]">
+          <AuthPanel
+            user={user}
+            authError={authError}
+            onSignup={onSignup}
+            onLogin={onLogin}
+            onLogout={onLogout}
+          />
         </div>
       </div>
 

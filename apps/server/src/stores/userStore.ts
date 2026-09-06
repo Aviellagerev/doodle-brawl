@@ -1,11 +1,7 @@
 import argon2 from "argon2";
 import { pool } from "../db.js";
-import { cleanName } from "../../../../packages/shared/index.js";
-export interface UserRow {
-  id: string;
-  email: string;
-  username: string | null;
-}
+import { cleanName, PublicUser } from "../../../../packages/shared/index.js";
+export type UserRow = PublicUser;
 const DUMMY_HASH = "$argon2id$v=19$m=19456,p=1,t=2$F0aalYjXLHtH21wNwcJROQ$Ji8rAYbeK0LaXz8m81nzxwhT1PZs5WlBlrn7vp0ZWYg";
 
 export async function createUser(email: string, username: string, password: string): Promise<UserRow | null> {
@@ -45,4 +41,12 @@ export async function verifyCredentials(email: string, password: string): Promis
 
   return { id: row.id, email: row.email, username: row.username };
 
+}
+
+export async function findUserById(id: string): Promise<UserRow | null> {
+  const r = await pool.query<UserRow>(
+    `SELECT id, email, username FROM users WHERE id = $1`,
+    [id],
+  );
+  return r.rows[0] ?? null;
 }

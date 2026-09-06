@@ -1,5 +1,11 @@
 
 
+export interface PublicUser {
+  id: string;
+  email: string;
+  username: string | null;
+}
+
 export interface Player {
   id: string;
   socketId: string;

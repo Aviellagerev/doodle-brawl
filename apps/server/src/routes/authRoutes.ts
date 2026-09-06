@@ -2,7 +2,7 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { issueSession, verifySession, revokeSession } from "../stores/sessionStore.js";
 import { getPlayer, createGuest, claimPlayer, renamePlayer, findPlayerForUser } from "../stores/playerStore.js";
-import { createUser, verifyCredentials } from "../stores/userStore.js";
+import { createUser, verifyCredentials, findUserById } from "../stores/userStore.js";
 
 const COOKIE_OPTS = {
     httpOnly: true,
@@ -31,11 +31,14 @@ export async function authRoutes(app: FastifyInstance) {
         const raw = req.cookies.sid;
         const playerId = raw ? await verifySession(raw) : null;
         const player = playerId ? await getPlayer(playerId) : null;
-        if (player) return { playerId: player.id, displayName: player.displayName };
+        if (player) {
+            const user = player.userId ? await findUserById(player.userId) : null;
+            return { playerId: player.id, displayName: player.displayName, user };
+        }
         const fresh = await createGuest("Guest");
         await startSession(reply, fresh.id);
 
-        return { playerId: fresh.id, displayName: fresh.displayName };
+        return { playerId: fresh.id, displayName: fresh.displayName, user: null };
     });
 
 

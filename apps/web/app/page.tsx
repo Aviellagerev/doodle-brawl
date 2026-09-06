@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import { io, Socket } from "socket.io-client";
-import { RoomResponse, RoomState, ChatMessage, RoomSettings } from "../../../packages/shared";
+import { RoomResponse, RoomState, ChatMessage, RoomSettings, PublicUser } from "../../../packages/shared";
 import JoinScreen from "./components/JoinScreen";
 import Lobby from "./components/Lobby";
 import GameScreen from "./components/game/GameScreen";
@@ -19,6 +19,9 @@ export default function Home() {
   const socketRef = useRef<Socket | null>(null);
   const roomStateRef = useRef<RoomState | null>(null);   // latest room, readable inside socket handlers
   const [playerId, setPlayerId] = useState("");
+const [user, setUser] = useState<PublicUser | null>(null);
+const [authError, setAuthError] = useState<string | null>(null);
+
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [wordLists, setWordLists] = useState<Record<string, string[]>>({});
   const [playerCount, setPlayerCount] = useState<number | null>(null);
@@ -55,7 +58,7 @@ export default function Home() {
       if (cancelled) return;
       const myId: string = meJson.playerId;
       setPlayerId(myId);
-
+      setUser(meJson.user ?? null);
       const socket = io(SERVER, { withCredentials: true });
       socketRef.current = socket;
       socket.on("connect", () => {
@@ -179,6 +182,59 @@ export default function Home() {
     socket.emit("start_game", roomState.roomId);
 
   };
+  async function post(path: string, body?: unknown) {
+    const res = await fetch(`${SERVER}${path}`, {
+      method: "POST",
+      credentials: "include",
+      // only declare a JSON body when there IS one — Fastify rejects a request
+      // that says application/json and then sends nothing (logout has no body)
+      ...(body === undefined
+        ? {}
+        : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
+    });
+    return { ok: res.ok, status: res.status, data: await res.json().catch(() => ({})) };
+  }
+  function authMessage(status: number, data: any): string {
+    if (status === 400) {
+      const first = data?.details && Object.values(data.details)[0];
+      return (first as string) ?? data?.message ?? "Check your details.";
+    }
+    if (status === 409) return "That email is already registered.";
+    if (status === 401) return "Invalid email or password.";
+    if (status === 429) return "Too many attempts. Try again in a few minutes.";
+    return "Something went wrong. Try again.";
+  } 
+    const reconnect = () => {
+    const s = socketRef.current;
+    if (!s) return;
+    s.disconnect();
+    s.connect();       // re-runs the handshake → re-reads the cookie
+  };
+    // NO reconnect — same player, it was claimed not replaced
+  const handleSignup = async (email: string, password: string, username: string) => {
+    setAuthError(null);
+    const { ok, status, data } = await post("/api/signup", { email, password, username });
+    if (!ok) return setAuthError(authMessage(status, data));
+    setUser(data.user);
+    setPlayerId(data.playerId);
+  
+  };
+  const handleLogin = async(email:string,password:string)=>{
+    setAuthError(null);
+    const { ok, status, data } = await post("/api/login", { email, password });
+    if (!ok) return setAuthError(authMessage(status, data));
+    setUser(data.user);
+    setPlayerId(data.playerId);
+    reconnect();
+  }
+    const handleLogout = async()=>{
+    setAuthError(null);
+    const { ok, data} = await post("/api/logout");
+    if (!ok) return setAuthError("Could not log out ");
+    setUser(null);
+    setPlayerId(data.playerId);
+    reconnect();
+  }
 
   const handleUpdateSettings = (settings: RoomSettings) => {
     socketRef.current?.emit("update_settings", settings);
@@ -201,7 +257,12 @@ export default function Home() {
           </div>
         );
       }
-      return <JoinScreen onCreate={handleCreate} onJoin={handleJoin} playerCount={playerCount} inviteCode={inviteCode} />;
+      return <JoinScreen
+      onCreate={handleCreate} onJoin={handleJoin}
+        playerCount={playerCount} inviteCode={inviteCode}
+        user={user} authError={authError}
+        onSignup={handleSignup} onLogin={handleLogin} onLogout={handleLogout}
+      />
     }
 
     const isHost = roomState.players.find((p) => p.isHost)?.id === playerId;
