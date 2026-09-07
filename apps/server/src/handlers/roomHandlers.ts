@@ -20,6 +20,29 @@ const disconectTimers = new Map<string, NodeJS.Timeout>();
 const roundTimers = new Map<string, NodeJS.Timeout>();
 const drawHistory = new Map<string, DrawEntry[]>();
 
+// A stroke entry holds many segments, so cap on total SEGMENTS, not entries.
+// Normal play never comes close; this bounds a client that streams draw events
+// in a loop. Oldest entries are dropped first, so a late joiner on an abusive
+// turn loses the start of the drawing rather than the server losing its heap.
+const MAX_HISTORY_SEGS = 20_000;
+const historyLen = new Map<string, number>();
+
+function entrySize(e: DrawEntry): number {
+    return e.kind === "stroke" ? e.segs.length : 1;
+}
+function resetHistory(roomId: string) {
+    drawHistory.set(roomId, []);
+    historyLen.set(roomId, 0);
+}
+// `added` may be negative (undo). Trims from the front while over the cap.
+function trimHistory(roomId: string, hist: DrawEntry[], added: number) {
+    let size = (historyLen.get(roomId) ?? 0) + added;
+    while (size > MAX_HISTORY_SEGS && hist.length > 0) {
+        size -= entrySize(hist.shift()!);
+    }
+    historyLen.set(roomId, Math.max(size, 0));
+}
+
 function say(io: Server, roomId: string, msg: ChatMessage, game?: GameState | null) {
     logChat(roomId, {
         msg,
@@ -32,6 +55,7 @@ function say(io: Server, roomId: string, msg: ChatMessage, game?: GameState | nu
 
 function forgetRoom(roomId: string) {
     drawHistory.delete(roomId);
+    historyLen.delete(roomId);
     forgetMatch(roomId);
 }
 
@@ -42,6 +66,7 @@ function recordSeg(roomId: string, seg: DrawSegment) {
     if (last && last.kind === "stroke" && last.id === seg.strokeId) last.segs.push(seg);
     else hist.push({ kind: "stroke", id: seg.strokeId ?? 0, segs: [seg] });
     drawHistory.set(roomId, hist);
+    trimHistory(roomId, hist, 1);
 }
 function stampT(game: GameState): number | undefined {
     return game.turnStartedAt ? Date.now() - game.turnStartedAt : undefined;
@@ -188,7 +213,7 @@ async function commitWord(io: Server, roomStore: RoomStore, roomId: string, word
     const now = Date.now();
     room.game = chooseWord(room.game, word, now, room.settings.drawTimeMs);
     startTurn(roomId, room.game);
-    drawHistory.set(roomId, []);   // fresh canvas for the new turn
+    resetHistory(roomId);   // fresh canvas for the new turn
     await roomStore.saveRoom(room);
     broadcastRoom(io, room); // drawer keeps the real word, guessers get blanks
     const delay = Math.max(0, (room.game.endsAt ?? now) - now);
@@ -440,12 +465,9 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
         socket.to(roomId).emit("draw_op", op);
 
         const h = drawHistory.get(roomId) ?? [];
-        console.log(h.map(e => e.kind === "stroke"
-            ? `stroke×${e.segs.length}@${e.segs[0]?.t}`
-            : `op:${e.op.kind}@${e.op.t}`));
-
         h.push({ kind: "op", id: op.strokeId ?? 0, op: { ...op, t: stampT(room.game) } });
         drawHistory.set(roomId, h);
+        trimHistory(roomId, h, 1);
     });
     socket.on("clear", async () => {
         const roomId = socket.data.roomId;
@@ -454,7 +476,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
         if (!room || !room.game) return;
         if (socket.data.playerId !== room.game.currentDrawerId) return; // only the drawer clears
         socket.to(roomId).emit("clear");
-        drawHistory.set(roomId, []);
+        resetHistory(roomId);
     });
     socket.on("undo", async () => {
         const roomId = socket.data.roomId;
@@ -463,7 +485,9 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
         if (!room || !room.game) return;
         if (socket.data.playerId !== room.game.currentDrawerId) return; // only the drawer undoes
         socket.to(roomId).emit("undo");
-        drawHistory.get(roomId)?.pop();
+        const hist = drawHistory.get(roomId);
+        const undone = hist?.pop();
+        if (hist && undone) trimHistory(roomId, hist, -entrySize(undone));
     });
     // a client whose board just mounted (late join / reconnect) asks for the current
     // drawing; replay the whole turn's history to that one socket.

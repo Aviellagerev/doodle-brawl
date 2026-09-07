@@ -30,3 +30,7 @@ export async function revokeSession(raw:string):Promise<void>{
     await pool.query(`
         DELETE FROM sessions where token_hash =$1`,[hashToken(raw)]);
 }
+export async function deleteExpiredSessions(): Promise<number> {
+    const r = await pool.query(`DELETE FROM sessions WHERE expires_at < now()`);
+    return r.rowCount ?? 0;
+}

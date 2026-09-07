@@ -352,6 +352,7 @@ const [authError, setAuthError] = useState<string | null>(null);
         playerCount={playerCount} inviteCode={inviteCode}
         user={user} onLogout={handleLogout}
         onOpenLogin={() => { setAuthError(null); setAuthView("login"); }}
+        onOpenSignup={() => { setAuthError(null); setAuthView("signup"); }}
         onOpenHistory={openHistory}
       />
     }

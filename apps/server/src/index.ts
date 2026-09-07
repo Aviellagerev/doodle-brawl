@@ -11,7 +11,7 @@ import cors from "@fastify/cors";
 import cookie from "@fastify/cookie";
 import rateLimit from "@fastify/rate-limit";
 import { installSocketGuard, broadcastPlayerCount, ipFromHeaders } from "./observability.js";
-import { verifySession } from "./stores/sessionStore.js";
+import { verifySession, deleteExpiredSessions } from "./stores/sessionStore.js";
 const roomStore = new RoomStore(redis);
 const app = Fastify({ logger: true });
 app.get("/health", async () => ({ ok: true }));
@@ -64,6 +64,18 @@ const start = async () => {
     });
 
     setInterval(() => broadcastPlayerCount(io, roomStore, app.log), 30_000);
+
+    // expired rows are already ignored by verifySession; this stops them piling up
+    const sweepSessions = async () => {
+        try {
+            const gone = await deleteExpiredSessions();
+            if (gone > 0) app.log.info({ deleted: gone }, "swept expired sessions");
+        } catch (err) {
+            app.log.error({ err }, "session sweep failed");
+        }
+    };
+    await sweepSessions();
+    setInterval(sweepSessions, 6 * 60 * 60 * 1000).unref();
 };
 start();
 
