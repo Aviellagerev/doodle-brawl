@@ -2,13 +2,17 @@
 
 import { useEffect, useState, useRef } from "react";
 import { io, Socket } from "socket.io-client";
-import { RoomResponse, RoomState, ChatMessage, RoomSettings, PublicUser } from "../../../packages/shared";
+import { RoomResponse, RoomState, ChatMessage, RoomSettings, PublicUser, MatchSummary, PlayerStats, MatchDetail } from "../../../packages/shared";
 import JoinScreen from "./components/JoinScreen";
 import Lobby from "./components/Lobby";
 import GameScreen from "./components/game/GameScreen";
 import GameOver from "./components/game/GameOver";
 import Chat from "./components/game/Chat";
 import { RoomNotFound, RoomFull, Disconnected } from "./components/game/StateScreens";
+import HistoryScreen from "./components/HistoryScreen";
+import LoginScreen from "./components/auth/LoginScreen";
+import SignupScreen from "./components/auth/SignupScreen";
+import MatchDetailScreen from "./components/MatchDetailScreen";
 
 const SERVER = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:3001";
 export default function Home() {
@@ -21,6 +25,13 @@ export default function Home() {
   const [playerId, setPlayerId] = useState("");
 const [user, setUser] = useState<PublicUser | null>(null);
 const [authError, setAuthError] = useState<string | null>(null);
+  const [showHistory, setShowHistory] = useState(false);
+  const [authView, setAuthView] = useState<null | "login" | "signup">(null);
+  const [history, setHistory] = useState<MatchSummary[]>([]);
+  const [stats, setStats] = useState<PlayerStats | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [matchDetail, setMatchDetail] = useState<MatchDetail | null>(null);
+  const [detailOpen, setDetailOpen] = useState(false);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [wordLists, setWordLists] = useState<Record<string, string[]>>({});
@@ -204,7 +215,40 @@ const [authError, setAuthError] = useState<string | null>(null);
     if (status === 429) return "Too many attempts. Try again in a few minutes.";
     return "Something went wrong. Try again.";
   } 
-    const reconnect = () => {
+    const openHistory = async () => {
+    setShowHistory(true);
+    setHistoryLoading(true);
+    try {
+      const [h, st] = await Promise.all([
+        fetch(`${SERVER}/api/history?limit=50`, { credentials: "include" }).then((r) => r.json()),
+        fetch(`${SERVER}/api/stats`, { credentials: "include" }).then((r) => r.json()),
+      ]);
+      setHistory(Array.isArray(h) ? h : []);
+      setStats(st && typeof st === "object" && "matchesPlayed" in st ? st : null);
+    } catch {
+      setHistory([]);
+      setStats(null);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  const openMatch = async (id: string) => {
+    setDetailOpen(true);
+    setMatchDetail(null);
+    setHistoryLoading(true);
+    try {
+      const res = await fetch(`${SERVER}/api/match/${id}`, { credentials: "include" });
+      const d = await res.json();
+      setMatchDetail(res.ok && d && "turns" in d ? d : null);
+    } catch {
+      setMatchDetail(null);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  const reconnect = () => {
     const s = socketRef.current;
     if (!s) return;
     s.disconnect();
@@ -217,7 +261,7 @@ const [authError, setAuthError] = useState<string | null>(null);
     if (!ok) return setAuthError(authMessage(status, data));
     setUser(data.user);
     setPlayerId(data.playerId);
-  
+    setAuthView(null);
   };
   const handleLogin = async(email:string,password:string)=>{
     setAuthError(null);
@@ -225,6 +269,7 @@ const [authError, setAuthError] = useState<string | null>(null);
     if (!ok) return setAuthError(authMessage(status, data));
     setUser(data.user);
     setPlayerId(data.playerId);
+    setAuthView(null);
     reconnect();
   }
     const handleLogout = async()=>{
@@ -246,6 +291,51 @@ const [authError, setAuthError] = useState<string | null>(null);
 
   function renderBody() {
     // level 1: not in a room yet
+    if (authView === "login") {
+      return (
+        <LoginScreen
+          authError={authError}
+          onLogin={handleLogin}
+          onGoSignup={() => { setAuthError(null); setAuthView("signup"); }}
+          onCancel={() => { setAuthError(null); setAuthView(null); }}
+        />
+      );
+    }
+
+    if (authView === "signup") {
+      return (
+        <SignupScreen
+          authError={authError}
+          onSignup={handleSignup}
+          onGoLogin={() => { setAuthError(null); setAuthView("login"); }}
+          onCancel={() => { setAuthError(null); setAuthView(null); }}
+        />
+      );
+    }
+
+    if (detailOpen) {
+      return (
+        <MatchDetailScreen
+          detail={matchDetail}
+          loading={historyLoading}
+          onClose={() => setDetailOpen(false)}
+        />
+      );
+    }
+
+    if (showHistory) {
+      return (
+        <HistoryScreen
+          matches={history}
+          stats={stats}
+          user={user}
+          loading={historyLoading}
+          onOpenMatch={openMatch}
+          onClose={() => setShowHistory(false)}
+        />
+      );
+    }
+
     if (roomState === null) {
       // a join attempt bounced — show the matching error screen instead of the form
       if (joinFail) {
@@ -260,8 +350,9 @@ const [authError, setAuthError] = useState<string | null>(null);
       return <JoinScreen
       onCreate={handleCreate} onJoin={handleJoin}
         playerCount={playerCount} inviteCode={inviteCode}
-        user={user} authError={authError}
-        onSignup={handleSignup} onLogin={handleLogin} onLogout={handleLogout}
+        user={user} onLogout={handleLogout}
+        onOpenLogin={() => { setAuthError(null); setAuthView("login"); }}
+        onOpenHistory={openHistory}
       />
     }
 

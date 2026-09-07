@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply,FastifyRequest } from "fastify";
 import {verifySession} from "../stores/sessionStore.js";
 import {playerIdsFor} from "../stores/playerStore.js"
-import { listMatches ,getStats,getMatchDetail} from "../stores/historyStore.js";
+import { listMatches, getStats, getMatchDetail, getReplay } from "../stores/historyStore.js";
 
 async function currentPlayerId(req: FastifyRequest): Promise<string | null> {
   const raw = req.cookies.sid;
@@ -32,6 +32,15 @@ export async function historyRoutes(app: FastifyInstance) {
             return reply.status(404).send({ message: "not found" });
 
         return detail;
+    });
+
+    app.get<{ Params: { turnId: string } }>("/api/replay/:turnId", async (req, reply) => {
+        const me = await currentPlayerId(req);
+        if (!me) return reply.status(401).send({ message: "no session" });
+        const ids = await playerIdsFor(me);
+        const entries = await getReplay(req.params.turnId, ids);
+        if (!entries) return reply.status(404).send({ message: "not found" });
+        return entries;
     });
 
 

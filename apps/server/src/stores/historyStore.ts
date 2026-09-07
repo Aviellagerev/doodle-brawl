@@ -1,6 +1,7 @@
+import { gunzipSync } from "node:zlib";
 import { pool } from "../db.js";
 import type {
-  MatchSummary, MatchDetail, MatchParticipant, TurnDetail, PlayerStats,
+  MatchSummary, MatchDetail, MatchParticipant, TurnDetail, PlayerStats, MatchChatLine,
 } from "../../../../packages/shared/index.js";
 
 function foldTurns(rows: any[]): TurnDetail[] {
@@ -49,6 +50,13 @@ export async function getMatchDetail(matchId: string): Promise<MatchDetail | nul
  WHERE t.match_id = $1
  ORDER BY t.turn_index, tg.points DESC NULLS LAST
 `, [matchId]);
+  const { rows: chatRows } = await pool.query(
+    `SELECT turn_id, player_id, display_name, text, kind, at
+       FROM match_chat WHERE match_id = $1
+      ORDER BY at`,
+    [matchId],
+  );
+
   return {
     matchId: match.match_id,
     roomCode: match.room_code,
@@ -62,11 +70,20 @@ export async function getMatchDetail(matchId: string): Promise<MatchDetail | nul
       placement: p.placement,
     })),
     turns: foldTurns(turnRows),
+    chat: chatRows.map((c): MatchChatLine => ({
+      turnId: c.turn_id === null ? null : String(c.turn_id),
+      playerId: c.player_id,
+      displayName: c.display_name,
+      text: c.text,
+      kind: c.kind,
+      at: c.at.toISOString(),
+    })),
   };
 }
 export async function listMatches(playerIds: string[], limit = 20): Promise<MatchSummary[]> {
   const r = await pool.query(
     `SELECT m.match_id, m.room_code, m.ended_at,
+            (m.settings->>'rounds')::int AS rounds,
             mp.display_name, mp.final_score, mp.placement,
             (SELECT count(*) FROM match_participants x
               WHERE x.match_id = m.match_id) AS player_count
@@ -81,6 +98,7 @@ export async function listMatches(playerIds: string[], limit = 20): Promise<Matc
     matchId: x.match_id,
     roomCode: x.room_code,
     endedAt: x.ended_at.toISOString(),
+    rounds: Number(x.rounds ?? 0),
     displayName: x.display_name,
     finalScore: x.final_score,
     placement: x.placement,
@@ -89,22 +107,46 @@ export async function listMatches(playerIds: string[], limit = 20): Promise<Matc
 }
 
 export async function getStats(playerIds: string[]): Promise<PlayerStats> {
-  const { rows: [s] } = await pool.query(
-    `SELECT count(*)                       AS chances,
-            count(ms_to_guess)             AS guessed,
-            round(avg(ms_to_guess))        AS avg_ms,
-            min(ms_to_guess)               AS fastest_ms
+  const { rows: [g] } = await pool.query(
+    `SELECT count(*)               AS chances,
+            count(ms_to_guess)     AS guessed,
+            round(avg(ms_to_guess)) AS avg_ms,
+            min(ms_to_guess)       AS fastest_ms
        FROM turn_guesses
       WHERE player_id = ANY($1)`,
     [playerIds],
   );
-  const chances = Number(s.chances);
-  const guessed = Number(s.guessed);
+  const { rows: [m] } = await pool.query(
+    `SELECT count(DISTINCT match_id)                       AS played,
+            count(*) FILTER (WHERE placement = 1)          AS won
+       FROM match_participants
+      WHERE player_id = ANY($1)`,
+    [playerIds],
+  );
+  const chances = Number(g.chances);
+  const guessed = Number(g.guessed);
   return {
+    matchesPlayed: Number(m.played),
+    matchesWon: Number(m.won),
     chances,
     guessed,
     hitRatePct: chances === 0 ? 0 : Math.round((100 * guessed) / chances),
-    avgMs: s.avg_ms === null ? null : Number(s.avg_ms),
-    fastestMs: s.fastest_ms === null ? null : Number(s.fastest_ms),
+    avgMs: g.avg_ms === null ? null : Number(g.avg_ms),
+    fastestMs: g.fastest_ms === null ? null : Number(g.fastest_ms),
   };
+}
+
+export async function getReplay(turnId: string, playerIds: string[]): Promise<unknown[] | null> {
+  const { rows: [row] } = await pool.query(
+    `SELECT r.data
+       FROM match_replays r
+       JOIN match_turns t ON t.turn_id = r.turn_id
+      WHERE r.turn_id = $1
+        AND EXISTS (SELECT 1 FROM match_participants mp
+                     WHERE mp.match_id = t.match_id
+                       AND mp.player_id = ANY($2))`,
+    [turnId, playerIds],
+  );
+  if (!row) return null;
+  return JSON.parse(gunzipSync(row.data).toString());
 }

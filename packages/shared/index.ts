@@ -6,6 +6,7 @@ export interface MatchSummary {
   matchId: string;
   roomCode: string;
   endedAt: string;
+  rounds: number;
   displayName: string;
   finalScore: number;
   placement: number;
@@ -13,10 +14,12 @@ export interface MatchSummary {
 }
 
 export interface PlayerStats {
-  chances: number;            // turns you were present for
-  guessed: number;            // of those, how many you got
+  matchesPlayed: number;
+  matchesWon: number;
+  chances: number;
+  guessed: number;
   hitRatePct: number;
-  avgMs: number | null;       // null until you've guessed at least once
+  avgMs: number | null;
   fastestMs: number | null;
 }
 
@@ -46,6 +49,15 @@ export interface MatchParticipant {
   placement: number;
 }
 
+export interface MatchChatLine {
+  turnId: string | null;
+  playerId: string | null;
+  displayName: string;
+  text: string;
+  kind: "chat" | "system" | "correct";
+  at: string;
+}
+
 export interface MatchDetail {
   matchId: string;
   roomCode: string;
@@ -54,6 +66,7 @@ export interface MatchDetail {
   settings: RoomSettings;
   participants: MatchParticipant[];
   turns: TurnDetail[];
+  chat: MatchChatLine[];
 }
 
 export interface PublicUser {
