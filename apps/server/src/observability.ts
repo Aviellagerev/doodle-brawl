@@ -1,25 +1,25 @@
-// Socket-level observability: structured logging (who connected, when, what
-// events they sent) + per-socket rate limiting so a flood gets dropped and
-// flagged rather than hammering the game. Logs go to stdout as JSON (pino via
-// Fastify) — on the server: `docker compose -f docker-compose.prod.yml logs -f server`.
+
 import type { FastifyBaseLogger } from "fastify";
 import type { Server, Socket } from "socket.io";
-import type { RoomStore } from "./roomStore.js";
+import type { RoomStore } from "./stores/roomStore.js";
 
-// Real client IP through Cloudflare (cf-connecting-ip) → Caddy (x-forwarded-for)
-// → the direct socket address as a last resort.
-export function clientIp(socket: Socket): string {
-  const h = socket.handshake.headers;
+
+export function ipFromHeaders(
+  h: Record<string, string | string[] | undefined>,
+  fallback: string,
+): string {
   const cf = h["cf-connecting-ip"];
   if (typeof cf === "string" && cf) return cf;
   const xff = h["x-forwarded-for"];
   if (typeof xff === "string" && xff) return xff.split(",")[0].trim();
-  return socket.handshake.address;
+  return fallback;
 }
 
-// Sliding-window caps per socket, per 10s. Drawing is bursty and legitimate, so
-// its cap is generous; everything else ("control": chat, guesses, settings,
-// joins…) is capped tight enough to stop spam but never a real human.
+export function clientIp(socket: Socket): string {
+  return ipFromHeaders(socket.handshake.headers, socket.handshake.address);
+}
+
+
 const WINDOW_MS = 10_000;
 const LIMITS = { draw: 2000, control: 80 } as const;
 
@@ -34,8 +34,6 @@ type SocketStats = {
   limited: number;
 };
 
-// Attach logging + rate limiting to a freshly connected socket. Call this before
-// registering the game handlers so the rate-limit middleware runs first.
 export function installSocketGuard(socket: Socket, log: FastifyBaseLogger) {
   const now = Date.now();
   const ip = clientIp(socket);
@@ -52,8 +50,6 @@ export function installSocketGuard(socket: Socket, log: FastifyBaseLogger) {
 
   log.info({ evt: "connect", sid: socket.id, ip, ua: socket.handshake.headers["user-agent"] }, "socket connected");
 
-  // Runs before every incoming event reaches its handler. next(Error) drops the
-  // packet (the handler never sees it) and notifies the client via an error.
   socket.use((packet, next) => {
     const event = String(packet[0] ?? "");
     const t = Date.now();
@@ -66,7 +62,7 @@ export function installSocketGuard(socket: Socket, log: FastifyBaseLogger) {
 
     if (bucket.n > LIMITS[cls]) {
       stats.limited += 1;
-      // don't drown the log if a flood is sustained — first few, then every 100th
+  
       if (stats.limited <= 3 || stats.limited % 100 === 0) {
         log.warn(
           { evt: "rate_limited", sid: socket.id, ip, event, cls, inWindow: bucket.n, cap: LIMITS[cls], hits: stats.limited, playerId: socket.data.playerId, roomId: socket.data.roomId },
@@ -76,7 +72,6 @@ export function installSocketGuard(socket: Socket, log: FastifyBaseLogger) {
       return next(new Error("rate_limited"));
     }
 
-    // Log the meaningful control events (skip the high-frequency canvas noise).
     if (cls === "control" && event !== "clear" && event !== "undo") {
       log.info({ evt: "req", sid: socket.id, ip, event, playerId: socket.data.playerId, roomId: socket.data.roomId }, event);
     }
@@ -96,7 +91,6 @@ export function installSocketGuard(socket: Socket, log: FastifyBaseLogger) {
   });
 }
 
-// Compute the live player count and push it to every connected client.
 export async function broadcastPlayerCount(io: Server, roomStore: RoomStore, log?: FastifyBaseLogger) {
   try {
     const count = await roomStore.countPlayers();

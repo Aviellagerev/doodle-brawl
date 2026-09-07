@@ -52,3 +52,4 @@ Thumbs.db
 deploy/DEPLOY.md
 deploy/Caddyfile
 deploy/HARDENING.md
+apps/server/seed.sql

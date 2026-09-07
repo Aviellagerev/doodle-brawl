@@ -1,6 +1,6 @@
 import { Server, Socket } from "socket.io";
-import { RoomStore } from "../roomStore.js";
-import { DrawSegment, DrawOp, DrawEntry, ChatMessage, PayoutEntry } from "../../../../packages/shared/index.js";
+import { RoomStore } from "../stores/roomStore.js";
+import { DrawSegment, DrawOp, DrawEntry, ChatMessage, ChatEntry, MAX_CHAT_LEN, MAX_NAME_LEN, PayoutEntry,cleanName } from "../../../../packages/shared/index.js";
 import { RoomState, Player, RoomSettings, GameState, CHOOSE_TIME_MS, SCORING_DELAY_MS } from "../../../../packages/shared/index.js";
 import { createNewRoom, createNewPlayer } from "./../services/roomServices.js";
 import {
@@ -8,16 +8,32 @@ import {
     toScoring, guessPoints, drawerBonus, allGuessed, advanceTurn, revealHintLetter,
     scaleByDifficulty,
 } from "../game/skribbl.js";
+import { startMatch, startTurn, logGuess, logChat, closeTurn, takeMatch, forgetMatch } from "../matchLog.js";
+import { renamePlayer } from "../stores/playerStore.js";
 import { WORD_LISTS } from "../game/words.js";
 import { broadcastPlayerCount } from "../observability.js";
+import { saveMatch } from "../stores/matchStore.js";
 
 const TIMEOUT_TIMER = 60_000;
 
-const disconectTimers = new Map<string,NodeJS.Timeout>();
+const disconectTimers = new Map<string, NodeJS.Timeout>();
 const roundTimers = new Map<string, NodeJS.Timeout>();
-// the CURRENT turn's drawing, per room, so we can replay it to anyone who joins
-// or reconnects mid-draw. Reset each turn; grows with strokes, shrinks on undo/clear.
 const drawHistory = new Map<string, DrawEntry[]>();
+
+function say(io: Server, roomId: string, msg: ChatMessage, game?: GameState | null) {
+    logChat(roomId, {
+        msg,
+        at: Date.now(),
+        round: game?.round ?? null,
+        drawerId: game?.currentDrawerId ?? null,
+    });
+    io.to(roomId).emit("chat_message", msg);
+}
+
+function forgetRoom(roomId: string) {
+    drawHistory.delete(roomId);
+    forgetMatch(roomId);
+}
 
 // record a freehand segment into the room's history, grouped into a stroke by strokeId
 function recordSeg(roomId: string, seg: DrawSegment) {
@@ -26,6 +42,9 @@ function recordSeg(roomId: string, seg: DrawSegment) {
     if (last && last.kind === "stroke" && last.id === seg.strokeId) last.segs.push(seg);
     else hist.push({ kind: "stroke", id: seg.strokeId ?? 0, segs: [seg] });
     drawHistory.set(roomId, hist);
+}
+function stampT(game: GameState): number | undefined {
+    return game.turnStartedAt ? Date.now() - game.turnStartedAt : undefined;
 }
 // separate from the phase timer: fires the gradual letter reveals during drawing
 const hintTimers = new Map<string, NodeJS.Timeout>();
@@ -100,6 +119,8 @@ async function finishRound(io: Server, roomStore: RoomStore, roomId: string) {
     const room = await roomStore.getRoom(roomId);
     if (!room || !room.game || room.game.phase !== "drawing") return;
     finalizePayout(room.game, room.players);
+    const h = drawHistory.get(roomId) ?? [];
+    closeTurn(roomId, room.players, h);
     room.game = toScoring(room.game);
     room.game.endsAt = Date.now() + SCORING_DELAY_MS;   // deadline for the scoreboard countdown
     await roomStore.saveRoom(room);
@@ -115,11 +136,22 @@ async function advanceRound(io: Server, roomStore: RoomStore, roomId: string) {
     const result = advanceTurn(room.game, room.players, room.settings.rounds);
     room.game = result.game;
     if (result.done) {
-        room.status = "finished";            // → victory screen
+        room.status = "finished";
         await roomStore.saveRoom(room);
         broadcastRoom(io, room);
+        const log = takeMatch(roomId, room.players, Date.now());
+        if (log) {
+            try {
+                const id = await saveMatch(log);
+                console.log(`match ${id} saved`);
+            } catch (err) {
+                console.error("match history save failed", err);
+            }
+        }
+
         return;
     }
+
     await roomStore.saveRoom(room);
     broadcastRoom(io, room);
     await offerWords(io, roomStore, room);    // set up the new drawer's choosing phase
@@ -155,6 +187,7 @@ async function commitWord(io: Server, roomStore: RoomStore, roomId: string, word
     if (!room || !room.game || room.game.phase !== "choosing") return;
     const now = Date.now();
     room.game = chooseWord(room.game, word, now, room.settings.drawTimeMs);
+    startTurn(roomId, room.game);
     drawHistory.set(roomId, []);   // fresh canvas for the new turn
     await roomStore.saveRoom(room);
     broadcastRoom(io, room); // drawer keeps the real word, guessers get blanks
@@ -164,6 +197,9 @@ async function commitWord(io: Server, roomStore: RoomStore, roomId: string, word
 }
 
 // Clamp an incoming (untrusted) setting value into a sane range.
+// names are attacker-controlled: bound the length, and never let a blank one through
+
+
 function clamp(v: unknown, min: number, max: number, fallback: number): number {
     const n = typeof v === "number" && Number.isFinite(v) ? v : fallback;
     return Math.max(min, Math.min(max, Math.round(n)));
@@ -185,10 +221,13 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
     roomStore.countPlayers().then((n) => socket.emit("player_count", n)).catch(() => { });
 
     socket.on("create_room", async (data, callback) => {
+        const name = cleanName(data.name);
+        renamePlayer(socket.data.playerId, name).catch((err) =>
+            console.error("renamePlayer failed", err));
         const hostPlayer: Player = createNewPlayer({
-            id: data.id,
+            id: socket.data.playerId,
             socketId: socket.id,
-            name: data.name,
+            name,
             isHost: true,
         });
 
@@ -199,7 +238,6 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
 
             socket.join(newRoom.roomId);
             socket.data.roomId = newRoom.roomId;
-            socket.data.playerId = hostPlayer.id;
             broadcastRoom(io, newRoom);
             broadcastPlayerCount(io, roomStore);
             console.log(`Room ${newRoom.roomId} created by ${hostPlayer.name}`);
@@ -216,19 +254,22 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
     socket.on('join_room', async (data, callback) => {
 
         const roomId = data.code;
+        const name = cleanName(data.name);
+        renamePlayer(socket.data.playerId, name).catch((err) =>
+            console.error("renamePlayer failed", err));
         const newPlayer: Player = createNewPlayer({
-            id: data.id,
+            id: socket.data.playerId,
             socketId: socket.id,
-            name: data.name,
+            name,
             isHost: false,
         })
-        const timer = disconectTimers.get(data.id);
-         if (timer) { clearTimeout(timer); disconectTimers.delete(data.id); } 
-         //stop and reconect (disconnect doesnt remove player (aka fixed no host bug))
+        const timer = disconectTimers.get(socket.data.playerId);
+        if (timer) { clearTimeout(timer); disconectTimers.delete(socket.data.playerId); }
+        //stop and reconect (disconnect doesnt remove player (aka fixed no host bug))
         try {
             const existing = await roomStore.getRoom(roomId);
             if (existing) {
-            //rmove the timer here ?
+                //rmove the timer here ?
                 const rejoining = existing.players.some((p) => p.id === newPlayer.id);
                 if (!rejoining && existing.players.length >= existing.settings.maxPlayers) {
                     callback({ success: false, error: "Room is full." });
@@ -241,11 +282,10 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
 
                 socket.join(roomId);
                 socket.data.roomId = room.roomId;
-                socket.data.playerId = newPlayer.id;
                 console.log(`user: ${newPlayer.name} joined id: ${newPlayer.id}`);
                 broadcastRoom(io, room);
                 broadcastPlayerCount(io, roomStore);
-                io.to(roomId).emit("chat_message", { author: "System", text: `${newPlayer.name} joined the room`, kind: "system" } as ChatMessage);
+                say(io, roomId, { author: "System", text: `${newPlayer.name} joined the room`, kind: "system", playerId: newPlayer.id }, room.game);
                 callback({ success: true, roomId: roomId, room });
             }
             else {
@@ -266,11 +306,14 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
 
     socket.on("leave_room", async (data, callback) => {
         try {
-            const { room, removed } = await roomStore.leavePlayer(data.roomId, data.id);
+            const { room, removed } = await roomStore.leavePlayer(data.roomId, socket.data.playerId);
             socket.leave(data.roomId);
+
             if (room) {
                 broadcastRoom(io, room);
-                io.to(room.roomId).emit("chat_message", { author: "System", text: `${removed?.name ?? "A player"} left the room`, kind: "system" } as ChatMessage);
+                say(io, room.roomId, { author: "System", text: `${removed?.name ?? "A player"} left the room`, kind: "system", playerId: removed?.id }, room.game);
+            } else {
+                forgetRoom(data.roomId);   // room emptied and was deleted
             }
             broadcastPlayerCount(io, roomStore);
             callback({ success: true });
@@ -289,7 +332,9 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
                 const { room, removed } = await roomStore.leavePlayer(roomId, playerId);
                 if (room) {
                     broadcastRoom(io, room);
-                    io.to(roomId).emit("chat_message", { author: "System", text: `${removed?.name ?? "A player"} left the room`, kind: "system" } as ChatMessage);
+                    say(io, roomId, { author: "System", text: `${removed?.name ?? "A player"} left the room`, kind: "system", playerId: removed?.id }, room.game);
+                } else {
+                    forgetRoom(roomId);   // room emptied and was deleted
                 }
                 broadcastPlayerCount(io, roomStore);
             } catch (error) {
@@ -298,7 +343,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
             finally {
                 disconectTimers.delete(playerId);
             }
-        },TIMEOUT_TIMER))
+        }, TIMEOUT_TIMER))
 
 
     });
@@ -319,7 +364,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
             const game = createInitialGame(host.id);
             const updated = await roomStore.startGame(roomId, game);
             if (!updated) return;
-
+            startMatch(roomId, updated);
             // fresh petty-awards tallies for the new game
             updated.stats = { guessMs: {}, wrong: {}, doodle: {} };
             await roomStore.saveRoom(updated);
@@ -383,7 +428,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
 
         // relay to everyone else in the room (socket.to excludes the sender)
         socket.to(roomId).emit("draw", segment);
-        recordSeg(roomId, segment);   // keep the turn's canvas for late joiners
+        recordSeg(roomId, { ...segment, t: stampT(room.game) });   // keep the turn's canvas for late joiners
     });
     // shape/fill tool ops (line/rect/ellipse/fill) — relayed exactly like "draw"
     socket.on("draw_op", async (op: DrawOp) => {
@@ -393,8 +438,13 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
         if (!room || !room.game) return;
         if (socket.data.playerId !== room.game.currentDrawerId) return; // drawer only
         socket.to(roomId).emit("draw_op", op);
+
         const h = drawHistory.get(roomId) ?? [];
-        h.push({ kind: "op", id: op.strokeId ?? 0, op });
+        console.log(h.map(e => e.kind === "stroke"
+            ? `stroke×${e.segs.length}@${e.segs[0]?.t}`
+            : `op:${e.op.kind}@${e.op.t}`));
+
+        h.push({ kind: "op", id: op.strokeId ?? 0, op: { ...op, t: stampT(room.game) } });
         drawHistory.set(roomId, h);
     });
     socket.on("clear", async () => {
@@ -427,7 +477,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
         if (!roomId) return;
         const raw = data.text;
         if (typeof raw !== "string" || raw.trim().length === 0) return;
-        const text = raw.trim();
+        const text = raw.trim().slice(0, MAX_CHAT_LEN);   // bound it: this gets stored
 
         const room = await roomStore.getRoom(roomId);
         if (!room) return;
@@ -452,8 +502,9 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
                 const pts = scaleByDifficulty(guessPoints(timeLeft, room.settings.drawTimeMs), game.wordDifficulty);
                 player.score = (player.score ?? 0) + pts;
                 const drawer = room.players.find((p) => p.id === game.currentDrawerId);
-                if (drawer) drawer.score = (drawer.score ?? 0) + drawerBonus(pts);
-                // record this guesser's payout line (first correct guesser is flagged)
+                const bonus = drawerBonus(pts);
+                if (drawer) drawer.score = (drawer.score ?? 0) + bonus;
+                logGuess(roomId, player.id, elapsedMs, pts, bonus);
                 const isFirst = game.guessedIds.length === 0;
                 (game.payout ??= []).push({
                     playerId: player.id,
@@ -471,8 +522,10 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
                 await roomStore.saveRoom(room);
 
                 // announce WITHOUT the word, then push the updated scores
-                const note: ChatMessage = { author: "System", text: `${player.name} guessed the word!`, kind: "correct" };
-                io.to(roomId).emit("chat_message", note);
+                // stays authored by System (the word must not leak), but carries the
+                // guesser's id so the guess is queryable without parsing prose
+                const note: ChatMessage = { author: "System", text: `${player.name} guessed the word!`, kind: "correct", playerId: player.id };
+                say(io, roomId, note, game);
                 broadcastRoom(io, room);
 
                 // everyone guessed? end the round now instead of waiting for the clock
@@ -481,7 +534,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
                 }
                 return;
             }
-  
+
             if (!isDrawer && !already) {
                 const stats = (room.stats ??= { guessMs: {}, wrong: {}, doodle: {} });
                 stats.wrong[player.id] = (stats.wrong[player.id] ?? 0) + 1;
@@ -490,9 +543,9 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
             }
         }
 
-     
-        const message: ChatMessage = { author: player.name, text, kind: "chat" };
-        io.to(roomId).emit("chat_message", message);   // io.to = everyone INCLUDING sender
+
+        const message: ChatMessage = { author: player.name, text, kind: "chat", playerId: player.id };
+        say(io, roomId, message, room.game);   // records for history, then emits to everyone
     });
 
     socket.on("update_settings", async (data) => {

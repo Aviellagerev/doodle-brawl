@@ -1,5 +1,80 @@
 
 
+// ─── match history (wire types: dates travel as ISO strings, not Date) ───
+
+export interface MatchSummary {
+  matchId: string;
+  roomCode: string;
+  endedAt: string;
+  rounds: number;
+  displayName: string;
+  finalScore: number;
+  placement: number;
+  playerCount: number;
+}
+
+export interface PlayerStats {
+  matchesPlayed: number;
+  matchesWon: number;
+  chances: number;
+  guessed: number;
+  hitRatePct: number;
+  avgMs: number | null;
+  fastestMs: number | null;
+}
+
+export interface GuessDetail {
+  playerId: string;
+  displayName: string;
+  msToGuess: number | null;   // null = was present, never guessed
+  points: number;
+}
+
+export interface TurnDetail {
+  turnId: string;             // BIGSERIAL — arrives as a string
+  round: number;
+  turnIndex: number;
+  word: string;
+  difficulty: string;
+  drawerName: string;
+  drawerPoints: number;
+  hasReplay: boolean;         // the blob is fetched separately, on demand
+  guesses: GuessDetail[];
+}
+
+export interface MatchParticipant {
+  playerId: string;
+  displayName: string;
+  finalScore: number;
+  placement: number;
+}
+
+export interface MatchChatLine {
+  turnId: string | null;
+  playerId: string | null;
+  displayName: string;
+  text: string;
+  kind: "chat" | "system" | "correct";
+  at: string;
+}
+
+export interface MatchDetail {
+  matchId: string;
+  roomCode: string;
+  startedAt: string;
+  endedAt: string;
+  settings: RoomSettings;
+  participants: MatchParticipant[];
+  turns: TurnDetail[];
+  chat: MatchChatLine[];
+}
+
+export interface PublicUser {
+  id: string;
+  email: string;
+  username: string | null;
+}
+
 export interface Player {
   id: string;
   socketId: string;
@@ -102,10 +177,10 @@ export interface GameState {
   // per-letter reveal shown to guessers: "" = hidden, " " = space, else the letter.
   // Only ever holds revealed letters (safe to broadcast); null outside "drawing".
   hint: string[] | null;
-  // Per-turn score breakdown for the "Round N payout" scoring screen.
-  // null during "choosing"; [] once "drawing" starts, filled as players guess;
-  // finalized (drawer bonus + missed players appended) when the turn ends.
+  
   payout: PayoutEntry[] | null;
+  turnStartedAt: number | null;  
+
 }
 
 export interface Point {
@@ -117,12 +192,11 @@ export interface DrawSegment{
   to:Point;
   color:string;
   width:number;
-  erase?:boolean;   // eraser stroke — receivers clear instead of paint
-  strokeId?:number; // groups segments of one pointer-down..up stroke (for undo)
+  erase?:boolean; 
+  strokeId?:number; 
+  t?:number //ms since turn start (present in replayed only)
 }
-// A single committed shape/fill operation from the drawer's tools (line/rect/
-// ellipse/fill). Relayed drawer→room like DrawSegment. For "fill", `from` is the
-// seed point (`to` is unused).
+
 export interface DrawOp {
   kind: "line" | "rect" | "ellipse" | "fill";
   from: Point;
@@ -130,10 +204,9 @@ export interface DrawOp {
   color: string;
   width: number;
   strokeId?: number;   // groups this op with the current stroke (for undo)
+   t?:number
 }
-// One entry in the current turn's drawing history: either a freehand stroke (its
-// segments) or a single committed op. The server keeps an ordered list of these
-// per room and replays them to anyone who joins mid-draw ("canvas_state" event).
+
 export type DrawEntry =
   | { kind: "stroke"; id: number; segs: DrawSegment[] }
   | { kind: "op"; id: number; op: DrawOp };
@@ -141,4 +214,21 @@ export interface ChatMessage {
   author: string;
   text: string;
   kind: "chat" | "system" | "correct";   // correct = someone guessed the word
+  playerId?: string;
+}
+
+export const MAX_CHAT_LEN = 200;
+
+
+export const MAX_NAME_LEN = 24;
+
+
+export interface ChatEntry {
+  msg: ChatMessage;
+  at: number;                // epoch ms
+  round: number | null;      // null outside a game
+  drawerId: string | null;   // with `round`, identifies the turn
+}
+export function cleanName(v: unknown): string {
+    return String(v ?? "").trim().slice(0, MAX_NAME_LEN) || "Player";
 }

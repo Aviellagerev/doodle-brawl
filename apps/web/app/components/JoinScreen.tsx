@@ -3,16 +3,22 @@
 import { useState } from "react";
 import ThemeToggle from "./ThemeToggle";
 import { initialsOf, colorOf } from "../lib/avatar";
+import type { PublicUser } from "../../../../packages/shared";
 
 type JoinScreenProps = {
   onCreate: (name: string) => void;
   onJoin: (name: string, code: string) => void;
-  playerCount?: number | null;   // live count of players currently in rooms
-  joinError?: string | null;     // server-side error to show inline (e.g. "room not found"); cleared by the parent
-  inviteCode?: string | null;    // set from a ?room=CODE invite link → compact join-by-invite mode
+  playerCount?: number | null;
+  joinError?: string | null;
+  inviteCode?: string | null;
+  user?: PublicUser | null;      // null = playing as a guest
+  onLogout: () => void | Promise<void>;
+  onOpenLogin: () => void;
+  onOpenHistory: () => void;
 };
 
-export default function JoinScreen({ onCreate, onJoin, playerCount, joinError, inviteCode }: JoinScreenProps) {
+
+export default function JoinScreen({ onCreate, onJoin, playerCount, joinError, inviteCode, user, onLogout, onOpenLogin, onOpenHistory }: JoinScreenProps) {
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
   const [blob, setBlob] = useState(0);      // reroll counter for the avatar colour
@@ -37,7 +43,26 @@ export default function JoinScreen({ onCreate, onJoin, playerCount, joinError, i
 
   return (
     <div className="relative min-h-screen flex items-center justify-center gap-8 sm:gap-14 flex-wrap p-5 sm:p-10">
-      <div className="absolute top-5 right-6 flex gap-2.5">
+      <div className="absolute top-5 right-6 flex gap-2.5 items-center flex-wrap justify-end">
+        {user ? (
+          <>
+            <span className="font-loud text-ink/60 max-w-[150px] truncate" style={{ fontWeight: 700, fontSize: 12.5 }}>
+              {user.username || user.email}
+            </span>
+            <button onClick={onLogout} className="font-bold cursor-pointer bg-card text-ink"
+              style={{ border: "2.5px solid var(--outline)", borderRadius: 12, ...hardShadow(3, 3), padding: "8px 13px", fontSize: 12 }}>
+              Log out
+            </button>
+          </>
+        ) : (
+          <>
+            <span className="font-loud text-ink/45" style={{ fontWeight: 700, fontSize: 12 }}>already playing?</span>
+            <button onClick={onOpenLogin} className="font-bold cursor-pointer bg-card text-ink"
+              style={{ border: "2.5px solid var(--outline)", borderRadius: 12, ...hardShadow(3, 3), padding: "8px 13px", fontSize: 12 }}>
+              Log in
+            </button>
+          </>
+        )}
         <ThemeToggle />
         <button
           onClick={() => setShowHelp(true)}
@@ -77,6 +102,16 @@ export default function JoinScreen({ onCreate, onJoin, playerCount, joinError, i
           >
             up to 12 per room
           </span>
+        </div>
+
+        <div className="mt-7 max-w-[380px]">
+          <button
+            onClick={onOpenHistory}
+            className="w-full font-bold cursor-pointer bg-card text-ink"
+            style={{ border: "2.5px solid var(--outline)", borderRadius: 12, ...hardShadow(3, 3), padding: "11px 14px", fontSize: 13.5, transform: "rotate(0.4deg)" }}
+          >
+            📜 Your match history
+          </button>
         </div>
       </div>
 

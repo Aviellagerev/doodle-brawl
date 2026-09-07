@@ -73,6 +73,7 @@ function choosingTurn(drawerId: string, round: number, drawnThisRound: string[])
     word: null,
     wordLength: null,
     endsAt: null,
+     turnStartedAt: null,
     guessedIds: [],
     drawnThisRound,
     wordOptions: null,
@@ -135,6 +136,7 @@ export function chooseWord(game: GameState, word: string, now: number, drawTimeM
     wordPoints: points,
     hint: initialHint(word),
     payout: [],   // fresh per-turn score breakdown; filled as players guess
+    turnStartedAt: now
   };
 }
 
