@@ -10,7 +10,14 @@ export interface PlayerRow {
 function toPlayer(r: { id: string; display_name: string; user_id: string | null }): PlayerRow {
   return { id: r.id, displayName: r.display_name, userId: r.user_id };
 }
+export async function playerIdsFor(playerId: string): Promise<string[]>{
+    const rows = await pool.query(`SELECT id FROM players
+ WHERE id = $1
+    OR (user_id IS NOT NULL
+        AND user_id = (SELECT user_id FROM players WHERE id = $1))`,[playerId]);
 
+return rows.rows.map(r => r.id);
+}
 export async function getPlayer(id: string): Promise<PlayerRow | null> {
   const r = await pool.query(
     `SELECT id, display_name, user_id FROM players WHERE id = $1`,

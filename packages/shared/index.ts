@@ -1,5 +1,61 @@
 
 
+// ─── match history (wire types: dates travel as ISO strings, not Date) ───
+
+export interface MatchSummary {
+  matchId: string;
+  roomCode: string;
+  endedAt: string;
+  displayName: string;
+  finalScore: number;
+  placement: number;
+  playerCount: number;
+}
+
+export interface PlayerStats {
+  chances: number;            // turns you were present for
+  guessed: number;            // of those, how many you got
+  hitRatePct: number;
+  avgMs: number | null;       // null until you've guessed at least once
+  fastestMs: number | null;
+}
+
+export interface GuessDetail {
+  playerId: string;
+  displayName: string;
+  msToGuess: number | null;   // null = was present, never guessed
+  points: number;
+}
+
+export interface TurnDetail {
+  turnId: string;             // BIGSERIAL — arrives as a string
+  round: number;
+  turnIndex: number;
+  word: string;
+  difficulty: string;
+  drawerName: string;
+  drawerPoints: number;
+  hasReplay: boolean;         // the blob is fetched separately, on demand
+  guesses: GuessDetail[];
+}
+
+export interface MatchParticipant {
+  playerId: string;
+  displayName: string;
+  finalScore: number;
+  placement: number;
+}
+
+export interface MatchDetail {
+  matchId: string;
+  roomCode: string;
+  startedAt: string;
+  endedAt: string;
+  settings: RoomSettings;
+  participants: MatchParticipant[];
+  turns: TurnDetail[];
+}
+
 export interface PublicUser {
   id: string;
   email: string;

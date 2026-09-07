@@ -6,6 +6,7 @@ import { pool } from "./db.js"
 import { registerRoomHandlers } from "./handlers/roomHandlers.js"
 import { config } from "./config.js";
 import { authRoutes } from "./routes/authRoutes.js";
+import { historyRoutes } from "./routes/historyRoutes.js";
 import cors from "@fastify/cors";
 import cookie from "@fastify/cookie";
 import rateLimit from "@fastify/rate-limit";
@@ -28,6 +29,7 @@ const start = async () => {
         keyGenerator: (req) => ipFromHeaders(req.headers, req.ip),
     });
     await app.register(authRoutes);
+    await app.register(historyRoutes);
 
 
     await app.listen({ port: config.port, host: config.host });
