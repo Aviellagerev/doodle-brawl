@@ -1,17 +1,20 @@
+# LOCAL DEVELOPMENT ONLY. Production uses docker-compose.prod.yml.
+# Both services bind to 127.0.0.1 — not reachable from the LAN.
+# The dev database uses trust auth (no password); never run this file on a server.
 services:
   postgres:
     image: postgres:16
-    ports: ["5432:5432"]
+    ports: ["127.0.0.1:5432:5432"]
     environment:
-      POSTGRES_PASSWORD: devpassword
       POSTGRES_DB: skribbl
+      POSTGRES_HOST_AUTH_METHOD: trust
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./apps/server/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
 
   redis:
     image: redis:7-alpine
-    ports: ["6379:6379"]
+    ports: ["127.0.0.1:6379:6379"]
 
 volumes:
   postgres_data:

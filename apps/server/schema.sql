@@ -1,3 +1,5 @@
+-- DEV RESET SCRIPT — drops everything. Production uses migrations/0001_init.sql.
+
 DROP TABLE IF EXISTS scratch             CASCADE;
 DROP TABLE IF EXISTS match_replays       CASCADE;
 DROP TABLE IF EXISTS match_chat          CASCADE;
