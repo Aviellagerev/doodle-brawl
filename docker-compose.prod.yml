@@ -8,18 +8,44 @@ services:
     restart: unless-stopped
     # internal only — reachable by `server` via the compose network as host "redis"
 
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: skribbl
+      POSTGRES_PASSWORD: ${PGPASSWORD:?set PGPASSWORD in .env}
+      POSTGRES_DB: skribbl
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # runs ONLY when pgdata is empty (first boot). Never re-runs.
+      - ./apps/server/migrations/0001_init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U skribbl -d skribbl"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    # internal only — no ports published
+
   server:
     build:
       context: .
       dockerfile: apps/server/Dockerfile
     restart: unless-stopped
     depends_on:
-      - redis
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_healthy
     environment:
       PORT: "3001"
       HOST: "0.0.0.0"
       REDIS_HOST: redis
       REDIS_PORT: "6379"
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGUSER: skribbl
+      PGPASSWORD: ${PGPASSWORD:?set PGPASSWORD in .env}
+      PGDATABASE: skribbl
       CORS_ORIGIN: "${PUBLIC_URL:-https://draw.lagerev.dev}"
       WORDS_DIR: /app/apps/server/words
     volumes:
@@ -38,3 +64,6 @@ services:
     restart: unless-stopped
     ports:
       - "${WG_IP:-10.0.0.2}:3000:3000"   # WireGuard interface only
+
+volumes:
+  pgdata:
