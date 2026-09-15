@@ -32,7 +32,15 @@ const start = async () => {
     await app.register(historyRoutes);
 
 
+    // Bind first: a server that cannot listen must die loudly, not linger as a
+    // process that answers nothing.
     await app.listen({ port: config.port, host: config.host });
+
+    // Only now soften failures. A thrown handler should cost one player their
+    // action, not every player their game — the alternative is that a single
+    // malformed message ends every rite in progress.
+    process.on("unhandledRejection", (reason) => app.log.error({ reason }, "unhandled rejection"));
+    process.on("uncaughtException", (err) => app.log.error({ err }, "uncaught exception"));
     const io = new Server(app.server, {
         cors: {
             origin: config.corsOrigin === "*" ? true : config.corsOrigin,
@@ -61,6 +69,12 @@ const start = async () => {
     io.on("connection", (socket) => {
         installSocketGuard(socket, app.log);
         registerRoomHandlers(io, socket, roomStore);
+        // tell this socket the count straight away — otherwise a new arrival
+        // waits up to 30s for the next sweep before the join screen can say
+        // how many wizards are awake
+        roomStore.countPlayers()
+            .then((n) => socket.emit("player_count", n))
+            .catch((err) => app.log.error({ err }, "player count on connect failed"));
     });
 
     setInterval(() => broadcastPlayerCount(io, roomStore, app.log), 30_000);
@@ -77,7 +91,11 @@ const start = async () => {
     await sweepSessions();
     setInterval(sweepSessions, 6 * 60 * 60 * 1000).unref();
 };
-start();
+start().catch((err) => {
+    // nothing is listening yet, so there is no logger worth trusting
+    console.error("🔴 failed to start:", err);
+    process.exit(1);
+});
 
 const shutdown = async () => {
     console.log("shutting down...");

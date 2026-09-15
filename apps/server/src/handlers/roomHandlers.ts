@@ -1,7 +1,7 @@
 import { Server, Socket } from "socket.io";
 import { RoomStore } from "../stores/roomStore.js";
 import { DrawSegment, DrawOp, DrawEntry, ChatMessage, ChatEntry, MAX_CHAT_LEN, MAX_NAME_LEN, PayoutEntry,cleanName, cleanAvatar } from "../../../../packages/shared/index.js";
-import { RoomState, Player, RoomSettings, GameState, CHOOSE_TIME_MS, SCORING_DELAY_MS } from "../../../../packages/shared/index.js";
+import { RoomState, Player, RoomSettings, GameState, RoomResponse, CHOOSE_TIME_MS, SCORING_DELAY_MS } from "../../../../packages/shared/index.js";
 import { createNewRoom, createNewPlayer } from "./../services/roomServices.js";
 import {
     chooseWord, createInitialGame, pickWords, publicRoom,
@@ -239,6 +239,15 @@ function broadcastRoom(io: Server, room: RoomState) {
     }
 }
 
+/**
+ * Socket acknowledgements are optional on the wire: a client can emit
+ * "leave_room" with no callback at all. Calling an absent one threw inside the
+ * handler's try, and the catch then threw again calling it a second time —
+ * which took the whole server down with it. Everything acks through here now.
+ */
+type Ack<T> = ((res: T) => void) | undefined;
+const ack = <T>(cb: Ack<T>) => (res: T) => { if (typeof cb === "function") cb(res); };
+
 export function registerRoomHandlers(io: Server, socket: Socket, roomStore: RoomStore) {
     // tell the client which word lists exist per language (drives the lobby picker)
     socket.emit("word_meta", WORD_LISTS);
@@ -246,7 +255,8 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
     roomStore.countPlayers().then((n) => socket.emit("player_count", n)).catch(() => { });
 
     socket.on("create_room", async (data, callback) => {
-        const name = cleanName(data.name);
+        const reply = ack<RoomResponse>(callback);
+        const name = cleanName(data?.name);
         renamePlayer(socket.data.playerId, name).catch((err) =>
             console.error("renamePlayer failed", err));
         const hostPlayer: Player = createNewPlayer({
@@ -268,19 +278,23 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
             broadcastPlayerCount(io, roomStore);
             console.log(`Room ${newRoom.roomId} created by ${hostPlayer.name}`);
 
-            callback({ success: true, roomId: newRoom.roomId, room: newRoom });
+            reply({ success: true, roomId: newRoom.roomId, room: newRoom });
 
         } catch (error) {
             console.error("Failed to create room:", error);
-            callback({ success: false, error: true });
+            reply({ success: false, error: true });
         }
     })
 
 
     socket.on('join_room', async (data, callback) => {
-
-        const roomId = data.code;
-        const name = cleanName(data.name);
+        const reply = ack<RoomResponse>(callback);
+        const roomId = data?.code;
+        const name = cleanName(data?.name);
+        if (typeof roomId !== "string" || !roomId) {
+            reply({ success: false, error: "Room not found. Check the code and try again." });
+            return;
+        }
         renamePlayer(socket.data.playerId, name).catch((err) =>
             console.error("renamePlayer failed", err));
         const newPlayer: Player = createNewPlayer({
@@ -299,7 +313,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
                 //rmove the timer here ?
                 const rejoining = existing.players.some((p) => p.id === newPlayer.id);
                 if (!rejoining && existing.players.length >= existing.settings.maxPlayers) {
-                    callback({ success: false, error: "Room is full." });
+                    reply({ success: false, error: "Room is full." });
                     return;
                 }
             }
@@ -313,10 +327,10 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
                 broadcastRoom(io, room);
                 broadcastPlayerCount(io, roomStore);
                 say(io, roomId, { author: "System", text: `${newPlayer.name} has entered the circle`, kind: "system", playerId: newPlayer.id }, room.game);
-                callback({ success: true, roomId: roomId, room });
+                reply({ success: true, roomId: roomId, room });
             }
             else {
-                callback({
+                reply({
                     success: false,
                     error: "Room not found. Check the code and try again."
                 });
@@ -324,7 +338,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
         }
         catch (error) {
             console.error(`Failed to join room ${roomId}:`, error);
-            callback({
+            reply({
                 success: false,
                 error: "Server error while joining. Please try again."
             });
@@ -332,21 +346,24 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
     });
 
     socket.on("leave_room", async (data, callback) => {
+        const reply = ack<{ success: boolean; error?: string }>(callback);
+        const roomId = data?.roomId ?? socket.data.roomId;
+        if (!roomId) { reply({ success: true }); return; }
         try {
-            const { room, removed } = await roomStore.leavePlayer(data.roomId, socket.data.playerId);
-            socket.leave(data.roomId);
+            const { room, removed } = await roomStore.leavePlayer(roomId, socket.data.playerId);
+            socket.leave(roomId);
 
             if (room) {
                 broadcastRoom(io, room);
                 say(io, room.roomId, { author: "System", text: `${removed?.name ?? "A wizard"} has left the circle`, kind: "system", playerId: removed?.id }, room.game);
             } else {
-                forgetRoom(data.roomId);   // room emptied and was deleted
+                forgetRoom(roomId);   // room emptied and was deleted
             }
             broadcastPlayerCount(io, roomStore);
-            callback({ success: true });
+            reply({ success: true });
         } catch (error) {
-            console.error(`Failed to leave room ${data.roomId}:`, error);
-            callback({ success: false, error: "Server error while leaving." });
+            console.error(`Failed to leave room ${roomId}:`, error);
+            reply({ success: false, error: "Server error while leaving." });
         }
     });
     socket.on('disconnect', async () => {
@@ -386,6 +403,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
             const host = room.players.find((p) => p.isHost);
             if (!host || host.id !== socket.data.playerId) return; // host only
             if (room.status !== "waiting") return;                 // don't restart mid-game
+            if (room.players.length < 2) return;                   // a rite of one is merely drawing
 
             // game logic (pure): first turn, host draws first
             const game = createInitialGame(host.id);
