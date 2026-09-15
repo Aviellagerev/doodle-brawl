@@ -22,6 +22,7 @@ export default function Home() {
   const [roomState, setRoomState] = useState<RoomState | null>(null)
   const socketRef = useRef<Socket | null>(null);
   const roomStateRef = useRef<RoomState | null>(null);   // latest room, readable inside socket handlers
+  const playerIdRef = useRef("");                        // ditto, for the identity check
   const [playerId, setPlayerId] = useState("");
 const [user, setUser] = useState<PublicUser | null>(null);
 const [authError, setAuthError] = useState<string | null>(null);
@@ -55,6 +56,7 @@ const [authError, setAuthError] = useState<string | null>(null);
 
 
   useEffect(() => { roomStateRef.current = roomState; }, [roomState]);
+  useEffect(() => { playerIdRef.current = playerId; }, [playerId]);
 
   
   useEffect(() => {
@@ -70,8 +72,9 @@ const [authError, setAuthError] = useState<string | null>(null);
       const meRes = await fetch(`${SERVER}/api/me`, { credentials: "include" });
       const meJson = await meRes.json();
       if (cancelled) return;
-      const myId: string = meJson.playerId;
+      const myId: string = meJson.playerId ?? "";   // "" = a visitor the server has never met
       setPlayerId(myId);
+      playerIdRef.current = myId;
       setUser(meJson.user ?? null);
       const socket = io(SERVER, { withCredentials: true });
       socketRef.current = socket;
@@ -80,7 +83,7 @@ const [authError, setAuthError] = useState<string | null>(null);
         const rs = roomStateRef.current;
         if (rs) {
 
-          const me = rs.players.find((p) => p.id === myId);
+          const me = rs.players.find((p) => p.id === playerIdRef.current);
           socket.emit("join_room", { name: me?.name ?? "Player", code: rs.roomId, avatar: getMyAvatar() }, (res: RoomResponse) => {
             if (res.success && res.room) setRoomState(res.room);
           });
@@ -126,6 +129,41 @@ const [authError, setAuthError] = useState<string | null>(null);
     return () => clearInterval(id);
   }, [disconnected]);
 
+  /** Wait for the socket to come back up after a cookie change. */
+  const reconnectAndWait = () => new Promise<void>((resolve) => {
+    const s = socketRef.current;
+    if (!s) return resolve();
+    const done = () => { s.off("connect", done); resolve(); };
+    s.once("connect", done);
+    s.disconnect();
+    s.connect();
+    setTimeout(done, 4000);
+  });
+
+  /**
+   * Become someone, if we are not already.
+   *
+   * Looking at the front page mints nothing — the server only knows you once
+   * you summon a circle or walk into one. The new cookie arrives over HTTP, so
+   * the socket has to shake hands again before it counts as anyone.
+   */
+  const ensureIdentity = async (): Promise<string | null> => {
+    if (playerIdRef.current) return playerIdRef.current;
+    try {
+      const res = await fetch(`${SERVER}/api/me`, { method: "POST", credentials: "include" });
+      if (!res.ok) return null;
+      const data = await res.json();
+      const id: string = data.playerId;
+      setPlayerId(id);
+      playerIdRef.current = id;
+      setUser(data.user ?? null);
+      await reconnectAndWait();
+      return id;
+    } catch {
+      return null;
+    }
+  };
+
   const handleSendMessage = (text: string) => {
     const socket = socketRef.current;
     if (!socket) return;
@@ -138,12 +176,13 @@ const [authError, setAuthError] = useState<string | null>(null);
     socket.emit("choose_word", { word });
 
   };
-  const handleCreate = (name: string, emphasizeCode = false) => {
+  const handleCreate = async (name: string, emphasizeCode = false) => {
     const socket = socketRef.current;
     if (!socket || !name) {
       addLog("Error: Name is required to create a room.");
       return;
     }
+    if (!(await ensureIdentity())) { setJoinFail({ kind: "notfound", code: "" }); return; }
     addLog(`Creating room for ${name}...`);
 
     socket.emit("create_room", { name, avatar: getMyAvatar() }, (res: RoomResponse) => {
@@ -155,12 +194,13 @@ const [authError, setAuthError] = useState<string | null>(null);
     });
   };
 
-  const handleJoin = (name: string, code: string) => {
+  const handleJoin = async (name: string, code: string) => {
     const socket = socketRef.current;
     if (!socket || !name || !code) {
       addLog("Error: Name and Room Code are required to join.");
       return;
     }
+    if (!(await ensureIdentity())) { setJoinFail({ kind: "notfound", code }); return; }
     addLog(`${name} attempting to join room: ${code}...`);
 
     socket.emit("join_room", { name, code, avatar: getMyAvatar() }, (res: RoomResponse) => {
@@ -267,6 +307,8 @@ const [authError, setAuthError] = useState<string | null>(null);
     // NO reconnect — same player, it was claimed not replaced
   const handleSignup = async (email: string, password: string, username: string) => {
     setAuthError(null);
+    // signing the register claims the guest you already are, so be someone first
+    if (!(await ensureIdentity())) return setAuthError("Could not reach the guild. Try again.");
     const { ok, status, data } = await post("/api/signup", { email, password, username });
     if (!ok) return setAuthError(authMessage(status, data));
     setUser(data.user);

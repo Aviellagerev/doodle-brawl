@@ -248,6 +248,44 @@ function broadcastRoom(io: Server, room: RoomState) {
 type Ack<T> = ((res: T) => void) | undefined;
 const ack = <T>(cb: Ack<T>) => (res: T) => { if (typeof cb === "function") cb(res); };
 
+
+/**
+ * Re-arm the clocks for rooms mid-rite.
+ *
+ * Every deadline is an in-process `setTimeout`, so a restart — a deploy, a
+ * crash — used to leave rooms frozen for ever: the candle read zero and nothing
+ * advanced, with no way out but leaving. Redis still holds the room and its
+ * `endsAt`, so on boot (and on a slow sweep afterwards, for timers lost any
+ * other way) we schedule whatever that phase was waiting for. A deadline that
+ * has already passed fires immediately.
+ */
+export async function resumeRoundTimers(io: Server, roomStore: RoomStore, log?: { info: (o: object, m: string) => void }) {
+    const rooms = await roomStore.listRooms();
+    let resumed = 0;
+
+    for (const room of rooms) {
+        const game = room.game;
+        if (room.status !== "playing" || !game?.endsAt) continue;
+        if (roundTimers.has(room.roomId)) continue;        // this one is still ticking
+
+        const due = Math.max(0, game.endsAt - Date.now());
+        const roomId = room.roomId;
+        if (game.phase === "choosing") {
+            roundTimers.set(roomId, setTimeout(() => autoPickWord(io, roomStore, roomId), due));
+        } else if (game.phase === "drawing") {
+            roundTimers.set(roomId, setTimeout(() => finishRound(io, roomStore, roomId), due));
+        } else if (game.phase === "scoring") {
+            roundTimers.set(roomId, setTimeout(() => advanceRound(io, roomStore, roomId), due));
+        } else {
+            continue;
+        }
+        resumed += 1;
+    }
+
+    if (resumed) log?.info({ resumed }, "re-armed round timers");
+    return resumed;
+}
+
 export function registerRoomHandlers(io: Server, socket: Socket, roomStore: RoomStore) {
     // tell the client which word lists exist per language (drives the lobby picker)
     socket.emit("word_meta", WORD_LISTS);
@@ -256,6 +294,12 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
 
     socket.on("create_room", async (data, callback) => {
         const reply = ack<RoomResponse>(callback);
+        if (!socket.data.playerId) {
+            // a visitor who has not asked to be anyone yet; the client mints an
+            // identity and reconnects, then tries again
+            reply({ success: false, error: "no_identity" });
+            return;
+        }
         const name = cleanName(data?.name);
         renamePlayer(socket.data.playerId, name).catch((err) =>
             console.error("renamePlayer failed", err));
@@ -289,6 +333,10 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
 
     socket.on('join_room', async (data, callback) => {
         const reply = ack<RoomResponse>(callback);
+        if (!socket.data.playerId) {
+            reply({ success: false, error: "no_identity" });
+            return;
+        }
         const roomId = data?.code;
         const name = cleanName(data?.name);
         if (typeof roomId !== "string" || !roomId) {

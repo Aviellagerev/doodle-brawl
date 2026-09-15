@@ -1,7 +1,6 @@
 import test, { before } from "node:test";
 import assert from "node:assert/strict";
-import { Redis } from "ioredis";
-import { api, unique, Client, wait, playToFinish } from "./helpers.js";
+import { api, unique, Client, wait, playToFinish , resetRateLimits } from "./helpers.js";
 
 /**
  * Identity, sessions and the authorisation boundary on the history routes.
@@ -10,19 +9,21 @@ import { api, unique, Client, wait, playToFinish } from "./helpers.js";
  * suite would trip on its second run — so the limiter's counters are cleared
  * first. That is the only thing here that reaches past the public API.
  */
-before(async () => {
-  const redis = new Redis({ host: "127.0.0.1", port: 6379 });
-  const keys = await redis.keys("*rate-limit*");
-  if (keys.length) await redis.del(...keys);
-  await redis.quit();
-});
+before(resetRateLimits);
 
 async function freshGuest() {
-  const { body, cookie } = await api("/api/me");
+  const { body, cookie } = await api("/api/me", { method: "POST" });
   return { playerId: (body as { playerId: string }).playerId, cookie };
 }
 
-test("/api/me mints a guest, and the same cookie keeps them", async () => {
+test("looking at the front page mints nobody", async () => {
+  const before = await api("/api/me");
+  assert.equal(before.status, 200);
+  assert.equal((before.body as { playerId: string | null }).playerId, null, "a visitor is not yet anyone");
+  assert.equal(before.cookie, "", "and carries no session away");
+});
+
+test("asking to be someone mints a guest, and the cookie keeps them", async () => {
   const first = await freshGuest();
   assert.ok(first.playerId, "a player id came back");
   assert.ok(first.cookie.includes("sid="), "…with a session cookie");
@@ -30,6 +31,9 @@ test("/api/me mints a guest, and the same cookie keeps them", async () => {
   const again = await api("/api/me", { cookie: first.cookie });
   assert.equal((again.body as { playerId: string }).playerId, first.playerId, "the same wizard returns");
   assert.equal((again.body as { user: unknown }).user, null, "and is still a stranger");
+
+  const twice = await api("/api/me", { method: "POST", cookie: first.cookie });
+  assert.equal((twice.body as { playerId: string }).playerId, first.playerId, "asking again does not stack another");
 });
 
 test("signup claims the guest, keeping their player id", async () => {

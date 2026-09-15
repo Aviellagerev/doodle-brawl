@@ -1,4 +1,5 @@
 import { io, Socket } from "socket.io-client";
+import { Redis } from "ioredis";
 import type { RoomResponse, RoomState, ChatMessage } from "../../../packages/shared/index.js";
 
 export const SERVER = process.env.TEST_SERVER ?? "http://localhost:3001";
@@ -20,7 +21,12 @@ export class Client {
    */
   async connect(cookie?: string): Promise<this> {
     if (cookie) this.cookie = cookie;
-    const res = await fetch(`${SERVER}/api/me`, { headers: this.cookie ? { cookie: this.cookie } : {} });
+    // POST, not GET: looking at the front page no longer mints anyone, and a
+    // test client always wants an identity
+    const res = await fetch(`${SERVER}/api/me`, {
+      method: "POST",
+      headers: this.cookie ? { cookie: this.cookie } : {},
+    });
     const setCookie = res.headers.getSetCookie?.() ?? [];
     if (setCookie.length) this.cookie = setCookie.map((c) => c.split(";")[0]).join("; ");
     this.playerId = (await res.json()).playerId;
@@ -29,6 +35,18 @@ export class Client {
     this.socket.on("room_update", (r: RoomState) => this.rooms.push(r));
     this.socket.on("chat_message", (m: ChatMessage) => this.chat.push(m));
     this.socket.on("player_count", (n: number) => this.counts.push(n));
+    await new Promise<void>((ok, fail) => {
+      this.socket.once("connect", () => ok());
+      this.socket.once("connect_error", (e) => fail(e));
+      setTimeout(() => fail(new Error(`${this.name}: socket never connected`)), 5000);
+    });
+    return this;
+  }
+
+  /** Open a socket without ever asking the server for an identity. */
+  async connectAnonymously(): Promise<this> {
+    this.socket = io(SERVER, { transports: ["websocket"] });
+    this.socket.on("room_update", (r: RoomState) => this.rooms.push(r));
     await new Promise<void>((ok, fail) => {
       this.socket.once("connect", () => ok());
       this.socket.once("connect_error", (e) => fail(e));
@@ -129,4 +147,21 @@ export async function playToFinish(clients: Client[], ms = 60_000): Promise<Room
     await wait(120);
   }
   throw new Error("the rite never ended");
+}
+
+/**
+ * Clear the rate limiter's counters.
+ *
+ * Signup is 5/hour and login 8/15min per IP, which the suite would exhaust on
+ * its own — every run creates accounts, and the counters live in Redis and so
+ * outlive the server. Call this before anything that signs up or logs in.
+ */
+export async function resetRateLimits() {
+  const redis = new Redis({ host: "127.0.0.1", port: 6379 });
+  try {
+    const keys = await redis.keys("*rate-limit*");
+    if (keys.length) await redis.del(...keys);
+  } finally {
+    await redis.quit();
+  }
 }

@@ -1,7 +1,9 @@
-import test from "node:test";
+import test, { before } from "node:test";
 import assert from "node:assert/strict";
-import { Client, wait } from "./helpers.js";
+import { Client, wait , resetRateLimits} from "./helpers.js";
 import { CHOOSE_TIME_MS } from "../../../packages/shared/index.js";
+
+before(resetRateLimits);
 
 /** The room + round loop, driven over real sockets against a running server. */
 

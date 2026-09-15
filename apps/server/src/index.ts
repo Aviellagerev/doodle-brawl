@@ -3,7 +3,7 @@ import { Server } from "socket.io";
 import { RoomStore } from "./stores/roomStore.js"
 import { redis } from "./redis.js";
 import { pool } from "./db.js"
-import { registerRoomHandlers } from "./handlers/roomHandlers.js"
+import { registerRoomHandlers, resumeRoundTimers } from "./handlers/roomHandlers.js"
 import { config } from "./config.js";
 import { authRoutes } from "./routes/authRoutes.js";
 import { historyRoutes } from "./routes/historyRoutes.js";
@@ -12,6 +12,7 @@ import cookie from "@fastify/cookie";
 import rateLimit from "@fastify/rate-limit";
 import { installSocketGuard, broadcastPlayerCount, ipFromHeaders } from "./observability.js";
 import { verifySession, deleteExpiredSessions } from "./stores/sessionStore.js";
+import { pruneIdleGuests } from "./stores/playerStore.js";
 const roomStore = new RoomStore(redis);
 const app = Fastify({ logger: true });
 app.get("/health", async () => ({ ok: true }));
@@ -53,9 +54,13 @@ const start = async () => {
         try {
             const header = socket.handshake.headers.cookie;
             const raw = header ? app.parseCookie(header).sid : undefined;
+            // A visitor with no session may still connect — the join screen needs
+            // the player count before anyone has an identity. They are nobody
+            // until they ask to be someone, and create_room / join_room are the
+            // only doors that require it, so a nameless socket can never end up
+            // inside a room.
             const playerId = raw ? await verifySession(raw) : null;
-            if (!playerId) return next(new Error("unauthorized"));
-            socket.data.playerId = playerId;
+            if (playerId) socket.data.playerId = playerId;
             next();
         }
         catch (err) {
@@ -77,6 +82,11 @@ const start = async () => {
             .catch((err) => app.log.error({ err }, "player count on connect failed"));
     });
 
+    // rooms outlive this process in Redis, but their clocks do not: pick the
+    // in-flight ones back up, then keep sweeping in case a timer is ever lost
+    await resumeRoundTimers(io, roomStore, app.log);
+    setInterval(() => resumeRoundTimers(io, roomStore, app.log), 15_000);
+
     setInterval(() => broadcastPlayerCount(io, roomStore, app.log), 30_000);
 
     // expired rows are already ignored by verifySession; this stops them piling up
@@ -86,6 +96,13 @@ const start = async () => {
             if (gone > 0) app.log.info({ deleted: gone }, "swept expired sessions");
         } catch (err) {
             app.log.error({ err }, "session sweep failed");
+        }
+        try {
+            // guests who never played, and are too old to be mid-rite
+            const gone = await pruneIdleGuests(config.guestRetentionDays);
+            if (gone > 0) app.log.info({ deleted: gone, olderThanDays: config.guestRetentionDays }, "pruned idle guests");
+        } catch (err) {
+            app.log.error({ err }, "guest prune failed");
         }
     };
     await sweepSessions();

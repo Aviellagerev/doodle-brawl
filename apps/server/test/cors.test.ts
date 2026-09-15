@@ -1,7 +1,9 @@
-import test from "node:test";
+import test, { before } from "node:test";
 import assert from "node:assert/strict";
 import { io } from "socket.io-client";
-import { SERVER, api } from "./helpers.js";
+import { SERVER, api , resetRateLimits} from "./helpers.js";
+
+before(resetRateLimits);
 
 /**
  * The browser sends an Origin header on both the HTTP calls and the socket
@@ -27,7 +29,7 @@ function connectFrom(origin: string, cookie: string) {
 }
 
 test("the web origin may open a socket", async () => {
-  const { cookie } = await api("/api/me");
+  const { cookie } = await api("/api/me", { method: "POST" });
   assert.equal(await connectFrom(ALLOWED, cookie), "connected");
 });
 

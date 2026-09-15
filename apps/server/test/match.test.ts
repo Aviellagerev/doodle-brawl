@@ -1,7 +1,9 @@
-import test from "node:test";
+import test, { before } from "node:test";
 import assert from "node:assert/strict";
-import { Client, api, wait, playToFinish } from "./helpers.js";
+import { Client, api, wait, playToFinish , resetRateLimits} from "./helpers.js";
 import { MAX_CHAT_LEN, MAX_NAME_LEN } from "../../../packages/shared/index.js";
+
+before(resetRateLimits);
 
 /** A rite from beginning to end, and what it leaves behind in the chronicle. */
 
