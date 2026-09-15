@@ -86,15 +86,33 @@ test("no session token is ever handed back in a response body", async () => {
   assert.match(setCookie, /SameSite=Lax/i, "…and same-site");
 });
 
-test("failures say what went wrong, not where the code lives", async () => {
+test("failures say what went wrong, not what we are made of", async () => {
+  const cookie = await guest();
   const cases = [
-    await api("/api/match/not-a-uuid", { cookie: await guest() }),
+    await api("/api/match/not-a-uuid", { cookie }),
+    await api("/api/replay/not-a-number", { cookie }),
     await api("/api/login", { method: "POST", body: JSON.stringify({ email: "x", password: "y" }) }),
     await api("/api/history", { cookie: "sid=rubbish" }),
   ];
   for (const res of cases) {
     const body = JSON.stringify(res.body ?? "");
     assert.equal(/at \/|\.ts:\d|node_modules|stack/i.test(body), false, `a stack leaked: ${body.slice(0, 200)}`);
+    // the database is ours to know about: no driver text, no SQLSTATE, no
+    // column types. This is what a raw 500 used to hand over.
+    assert.equal(
+      /invalid input syntax|syntax for type|postgres|relation |column |22P02|\bbigint\b|\buuid\b/i.test(body),
+      false,
+      `the database described itself: ${body.slice(0, 200)}`,
+    );
+  }
+});
+
+test("an id of the wrong shape is simply not found", async () => {
+  const cookie = await guest();
+  for (const path of ["/api/match/not-a-uuid", "/api/match/../../etc/passwd", "/api/replay/not-a-number", "/api/replay/-1"]) {
+    const res = await api(path, { cookie });
+    assert.ok(res.status === 404 || res.status === 400, `${path} answered ${res.status}, not a refusal`);
+    assert.notEqual(res.status, 500, `${path} fell over instead of refusing`);
   }
 });
 

@@ -1,0 +1,6 @@
+
+> server@1.0.0 test /home/constantine/Desktop/general/skribll/skribl-clone/apps/server
+> tsx --test --test-concurrency=1 test/*.test.ts
+
+TAP version 13
+ ELIFECYCLE  Test failed. See above for more details.

@@ -29,6 +29,16 @@ const start = async () => {
         redis,
         keyGenerator: (req) => ipFromHeaders(req.headers, req.ip),
     });
+    // A failure the code did not anticipate is ours to read in the logs, not
+    // the visitor's to read on screen: driver messages name the database, its
+    // types and its error codes. Deliberate 4xx replies pass through untouched.
+    app.setErrorHandler((err: Error & { statusCode?: number }, req, reply) => {
+        const status = err.statusCode ?? 500;
+        if (status < 500) return reply.status(status).send(err);
+        req.log.error({ err, url: req.url }, "unhandled route error");
+        return reply.status(500).send({ message: "Something went wrong. Try again." });
+    });
+
     await app.register(authRoutes);
     await app.register(historyRoutes);
 
