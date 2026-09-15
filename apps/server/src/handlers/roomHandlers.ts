@@ -1,6 +1,6 @@
 import { Server, Socket } from "socket.io";
 import { RoomStore } from "../stores/roomStore.js";
-import { DrawSegment, DrawOp, DrawEntry, ChatMessage, ChatEntry, MAX_CHAT_LEN, MAX_NAME_LEN, PayoutEntry,cleanName } from "../../../../packages/shared/index.js";
+import { DrawSegment, DrawOp, DrawEntry, ChatMessage, ChatEntry, MAX_CHAT_LEN, MAX_NAME_LEN, PayoutEntry,cleanName, cleanAvatar } from "../../../../packages/shared/index.js";
 import { RoomState, Player, RoomSettings, GameState, CHOOSE_TIME_MS, SCORING_DELAY_MS } from "../../../../packages/shared/index.js";
 import { createNewRoom, createNewPlayer } from "./../services/roomServices.js";
 import {
@@ -254,6 +254,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
             socketId: socket.id,
             name,
             isHost: true,
+            avatar: cleanAvatar(data.avatar),
         });
 
         const newRoom: RoomState = createNewRoom(hostPlayer);
@@ -287,6 +288,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
             socketId: socket.id,
             name,
             isHost: false,
+            avatar: cleanAvatar(data.avatar),
         })
         const timer = disconectTimers.get(socket.data.playerId);
         if (timer) { clearTimeout(timer); disconectTimers.delete(socket.data.playerId); }
@@ -310,7 +312,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
                 console.log(`user: ${newPlayer.name} joined id: ${newPlayer.id}`);
                 broadcastRoom(io, room);
                 broadcastPlayerCount(io, roomStore);
-                say(io, roomId, { author: "System", text: `${newPlayer.name} joined the room`, kind: "system", playerId: newPlayer.id }, room.game);
+                say(io, roomId, { author: "System", text: `${newPlayer.name} has entered the circle`, kind: "system", playerId: newPlayer.id }, room.game);
                 callback({ success: true, roomId: roomId, room });
             }
             else {
@@ -336,7 +338,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
 
             if (room) {
                 broadcastRoom(io, room);
-                say(io, room.roomId, { author: "System", text: `${removed?.name ?? "A player"} left the room`, kind: "system", playerId: removed?.id }, room.game);
+                say(io, room.roomId, { author: "System", text: `${removed?.name ?? "A wizard"} has left the circle`, kind: "system", playerId: removed?.id }, room.game);
             } else {
                 forgetRoom(data.roomId);   // room emptied and was deleted
             }
@@ -357,7 +359,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
                 const { room, removed } = await roomStore.leavePlayer(roomId, playerId);
                 if (room) {
                     broadcastRoom(io, room);
-                    say(io, roomId, { author: "System", text: `${removed?.name ?? "A player"} left the room`, kind: "system", playerId: removed?.id }, room.game);
+                    say(io, roomId, { author: "System", text: `${removed?.name ?? "A wizard"} has left the circle`, kind: "system", playerId: removed?.id }, room.game);
                 } else {
                     forgetRoom(roomId);   // room emptied and was deleted
                 }
@@ -548,7 +550,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
                 // announce WITHOUT the word, then push the updated scores
                 // stays authored by System (the word must not leak), but carries the
                 // guesser's id so the guess is queryable without parsing prose
-                const note: ChatMessage = { author: "System", text: `${player.name} guessed the word!`, kind: "correct", playerId: player.id };
+                const note: ChatMessage = { author: "System", text: `${player.name} divined the spell!`, kind: "correct", playerId: player.id };
                 say(io, roomId, note, game);
                 broadcastRoom(io, room);
 
@@ -581,6 +583,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
         if (!host || host.id !== socket.data.playerId) return; // host only
         if (room.status !== "waiting") return;                 // settings lock once playing
 
+        const prev = room.settings;
         const s = (data ?? {}) as Partial<RoomSettings>;
         room.settings = {
             rounds: clamp(s.rounds, 1, 10, room.settings.rounds),
@@ -597,6 +600,17 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
         };
         await roomStore.saveRoom(room);
         broadcastRoom(io, room);
+
+        // the design's settings pill: one ⚙ line per changed rule
+        const changes: string[] = [];
+        if (room.settings.rounds !== prev.rounds) changes.push(`the rite to ${room.settings.rounds} rounds`);
+        if (room.settings.drawTimeMs !== prev.drawTimeMs) changes.push(`the candle to ${Math.round(room.settings.drawTimeMs / 1000)}s`);
+        if (room.settings.maxPlayers !== prev.maxPlayers) changes.push(`the circle to ${room.settings.maxPlayers} seats`);
+        if (room.settings.hints !== prev.hints) changes.push(room.settings.hints === 0 ? "the hints out" : `the hints to ${room.settings.hints}`);
+        if (room.settings.language !== prev.language) changes.push(`the grimoire to ${room.settings.language}`);
+        if (changes.length) {
+            say(io, roomId, { author: "System", text: `⚙ ${host.name} set ${changes.join(", ")}`, kind: "system", playerId: host.id }, room.game);
+        }
     });
 
     socket.on("play_again", async () => {

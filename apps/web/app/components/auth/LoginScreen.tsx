@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import ThemeToggle from "../ThemeToggle";
-import { hardShadow, EYEBROW, FIELD, FIELD_STYLE, Label, Wordmark, ErrorSticker, PasswordField } from "./AuthBits";
+import { Night, Starfield, Card, Tape, InkEyebrow, Btn, Ghost, DashDivider } from "../ui/Bits";
+import { LogoTile, Wordmark } from "../ui/Logo";
+import { TextField, SecretField, ErrorLine, FootLink } from "./AuthBits";
 
 type Props = {
   authError?: string | null;
@@ -11,6 +12,7 @@ type Props = {
   onCancel: () => void;
 };
 
+/** Enter the guild — for wizards who already have papers. */
 export default function LoginScreen({ authError, onLogin, onGoSignup, onCancel }: Props) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -26,62 +28,69 @@ export default function LoginScreen({ authError, onLogin, onGoSignup, onCancel }
   }
 
   return (
-    <div className="relative min-h-screen grid place-items-center p-5 sm:p-10">
-      <div className="absolute top-5 right-6"><ThemeToggle /></div>
+    <Night
+      className="relative grid place-items-center px-4 py-10 sm:px-8"
+      glow="rgba(255,214,140,.16)" x="50%" y="12%"
+      bloom="oklch(0.45 0.16 320 / .3)" bloomX="85%" bloomY="84%"
+    >
+      <Starfield top={130} left={40} />
 
-      <div className="w-full max-w-[440px]">
-        <div className="text-center mb-6">
-          <Wordmark size={44} />
-          <p className="font-loud italic text-ink/55 m-0 mt-3" style={{ fontWeight: 700, fontSize: 15 }}>
-            Pick up where you left off.
-          </p>
+      <div className="relative z-10 w-full max-w-[430px]">
+        <div className="flex flex-col items-center gap-4 mb-7">
+          <LogoTile size={86} fill="magenta" />
+          <div className="text-center">
+            <Wordmark size={38} onNight />
+          </div>
         </div>
 
-        <form
-          onSubmit={submit}
-          className="relative bg-card box-border w-full"
-          style={{ border: "2.5px solid var(--outline)", borderRadius: "18px 26px 16px 24px", ...hardShadow(5, 5), padding: "26px 26px 24px", transform: "rotate(-0.7deg)" }}
-        >
-          <span className="tape absolute" style={{ top: -15, left: "50%", width: 108, height: 28, transform: "translateX(-50%) rotate(-2deg)" }} />
+        <Card className="relative p-[26px] sm:p-[32px]" tilt={-0.9} radius="20px 15px 22px 14px">
+          <form onSubmit={submit}>
+            <Tape w={108} h={30} rotate={-2} top={-16} />
 
-          <span className="block font-mono uppercase text-ink/45 mb-1" style={EYEBROW}>welcome back</span>
-          <h2 className="font-loud m-0 mb-5" style={{ fontWeight: 800, fontSize: 30, lineHeight: 1.05 }}>Log in</h2>
+            <InkEyebrow dim={0.45} size={10} className="mt-1">the guild remembers you</InkEyebrow>
+            <h2 className="display m-0 mt-2 mb-6" style={{ fontSize: 38, color: "var(--ink-warm)" }}>Enter the guild</h2>
 
-          <Label>Email</Label>
-          <input type="email" value={email} onChange={(e) => { setEmail(e.target.value); setEdited(true); }}
-                 placeholder="you@example.com" autoComplete="email" className={FIELD + " mb-3.5"} style={FIELD_STYLE} />
+            <div className="flex flex-col gap-5">
+              <TextField
+                label="Sigil (email)"
+                type="email"
+                value={email}
+                onChange={(v) => { setEmail(v); setEdited(true); }}
+                placeholder="gorbo@thefens.example"
+                autoComplete="email"
+                size={19}
+              />
+              <SecretField
+                value={password}
+                onChange={(v) => { setPassword(v); setEdited(true); }}
+                placeholder="••••••••"
+                autoComplete="current-password"
+                size={19}
+              />
+            </div>
 
-          <PasswordField value={password} onChange={(v) => { setPassword(v); setEdited(true); }}
-                         placeholder="••••••••" autoComplete="current-password" />
+            {error && <ErrorLine text={error} />}
 
-          {error && <ErrorSticker text={error} />}
+            <Btn type="submit" tone="magenta" onLight className="w-full mt-7" size={24} radius="34px 28px 32px 30px" disabled={busy}>
+              {busy ? "…" : "CAST ME IN ✦"}
+            </Btn>
 
-          <button type="submit" disabled={busy}
-                  className="w-full font-loud cursor-pointer bg-orange text-card mt-5 disabled:opacity-60"
-                  style={{ border: "2.5px solid var(--outline)", borderRadius: "17px 13px 18px 12px", ...hardShadow(4, 4), padding: "13px 15px", fontWeight: 800, fontSize: 19 }}>
-            {busy ? "…" : "Log in"}
-          </button>
+            <p className="text-center m-0 mt-4" style={{ fontFamily: "var(--font-loud)", fontStyle: "italic", fontWeight: 700, fontSize: 13, color: "rgba(58,47,38,.5)" }}>
+              forgotten the word? it happens to the best of us
+            </p>
+          </form>
+        </Card>
 
-          <div className="flex items-center gap-2.5 mt-5 mb-4">
-            <span className="flex-1" style={{ borderTop: "2px dashed color-mix(in srgb, var(--ink) 25%, transparent)" }} />
-            <span className="font-mono uppercase text-ink/35" style={{ ...EYEBROW, fontSize: 9 }}>or</span>
-            <span className="flex-1" style={{ borderTop: "2px dashed color-mix(in srgb, var(--ink) 25%, transparent)" }} />
-          </div>
+        <div className="my-6">
+          <DashDivider label="or" />
+        </div>
 
-          <button type="button" onClick={onCancel}
-                  className="w-full font-bold cursor-pointer bg-card text-ink"
-                  style={{ border: "2.5px solid var(--outline)", borderRadius: 13, ...hardShadow(3, 3), padding: "10px 14px", fontSize: 13 }}>
-            Keep playing as a guest
-          </button>
-        </form>
+        <Ghost onClick={onCancel} className="w-full" style={{ minHeight: 52 }}>
+          play as a wandering stranger
+        </Ghost>
 
-        <p className="font-loud text-ink/55 text-center m-0 mt-5" style={{ fontWeight: 700, fontSize: 14 }}>
-          No account?{" "}
-          <button onClick={onGoSignup} className="underline cursor-pointer text-orange" style={{ fontWeight: 800 }}>
-            Make one
-          </button>
-        </p>
+        <FootLink lead="no account?" action="conjure one" onClick={onGoSignup} />
       </div>
-    </div>
+    </Night>
   );
 }

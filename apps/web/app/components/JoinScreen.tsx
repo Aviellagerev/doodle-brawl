@@ -1,287 +1,274 @@
 "use client";
 
-import { useState } from "react";
-import ThemeToggle from "./ThemeToggle";
-import { initialsOf, colorOf } from "../lib/avatar";
+import { useState, useSyncExternalStore } from "react";
+import Avatar from "./Avatar";
+import { Night, Starfield, Card, Tape, Eyebrow, InkEyebrow, Btn, Btn2, Ghost, DashDivider } from "./ui/Bits";
+import { Wordmark } from "./ui/Logo";
+import CandleOrnament from "./ui/CandleOrnament";
+import { subscribeMyAvatar, getMyAvatar, getServerAvatar, rerollMyAvatar } from "../lib/myAvatar";
 import type { PublicUser } from "../../../../packages/shared";
 
 type JoinScreenProps = {
-  onCreate: (name: string) => void;
+  onCreate: (name: string, emphasizeCode?: boolean) => void;
   onJoin: (name: string, code: string) => void;
   playerCount?: number | null;
   joinError?: string | null;
   inviteCode?: string | null;
-  user?: PublicUser | null;      // null = playing as a guest
+  user?: PublicUser | null;      // null = playing as a wandering stranger
   onLogout: () => void | Promise<void>;
   onOpenLogin: () => void;
   onOpenSignup: () => void;
   onOpenHistory: () => void;
 };
 
-
+/** 01 · Enter the guild. */
 export default function JoinScreen({ onCreate, onJoin, playerCount, joinError, inviteCode, user, onLogout, onOpenLogin, onOpenSignup, onOpenHistory }: JoinScreenProps) {
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
-  const [blob, setBlob] = useState(0);      // reroll counter for the avatar colour
+  const mine = useSyncExternalStore(subscribeMyAvatar, getMyAvatar, getServerAvatar);   // rolled once, kept until rerolled
   const [showHelp, setShowHelp] = useState(false);
-  const [nameError, setNameError] = useState(false);   // set when an action is attempted with an empty name
+  const [nameError, setNameError] = useState(false);
 
-  const hardShadow = (x: number, y: number) => ({ boxShadow: `${x}px ${y}px 0 var(--outline)` });
-  // shared look for the small header buttons — sized so login + signup + theme
-  // still fit on one row at 390px (Samsung A53) without wrapping onto the logo
-  const chip = { border: "2.5px solid var(--outline)", borderRadius: 12, ...hardShadow(3, 3), padding: "7px 11px", fontSize: 12 };
-
-  // Guard onCreate/onJoin behind a name check; returns true when the name is valid.
   const requireName = () => {
-    if (!name.trim()) {
-      setNameError(true);
-      return false;
-    }
+    if (!name.trim()) { setNameError(true); return false; }
     return true;
   };
+  // both doors make a room — the private one lands in the lobby with the code
+  // emphasised, which is the only difference the handoff draws between them
+  const tryQuick = () => { if (requireName()) onCreate(name); };
+  const tryPrivate = () => { if (requireName()) onCreate(name, true); };
   const tryJoin = () => { if (requireName()) onJoin(name, code); };
-  const tryCreate = () => { if (requireName()) onCreate(name); };
-  // invite mode: name is the only field; the room code comes from the invite link.
   const invite = !!inviteCode;
   const tryInviteJoin = () => { if (inviteCode && requireName()) onJoin(name, inviteCode); };
 
   return (
-    <div className="min-h-screen flex flex-col overflow-x-hidden">
-      {/* header — in normal flow, not absolute, so it can never sit on top of the wordmark */}
-      <header className="flex items-center justify-end gap-2 flex-none px-4 pt-4 sm:px-6 sm:pt-5">
+    <Night
+      className="relative flex flex-col overflow-x-hidden"
+      glow="rgba(255,214,140,.16)" x="30%" y="22%"
+      bloom="oklch(0.45 0.16 320 / .32)" bloomX="78%" bloomY="78%"
+    >
+      <Starfield top={120} left={56} wide />
+      <span
+        aria-hidden
+        className="absolute pointer-events-none"
+        style={{ bottom: -90, left: -70, width: 320, height: 320, borderRadius: "50%", background: "radial-gradient(circle, oklch(0.6 0.18 300 / .35), transparent 65%)" }}
+      />
+
+      {/* already sworn in? */}
+      <header className="relative z-10 flex items-center justify-between gap-3 flex-none px-4 pt-4 sm:px-7 sm:pt-6">
+        <Ghost onClick={onOpenHistory} title="the chronicle" style={{ minHeight: 42, padding: "0 16px", fontWeight: 700, fontSize: 12.5 }}>
+          📜<span className="ml-2">the chronicle</span>
+        </Ghost>
+
+        <div className="flex items-center gap-3">
         {user ? (
           <>
-            <span className="font-loud text-ink/60 max-w-[110px] sm:max-w-[150px] truncate" style={{ fontWeight: 700, fontSize: 12.5 }}>
+            <span
+              className="max-w-[110px] sm:max-w-[170px] truncate"
+              style={{ fontFamily: "var(--font-loud)", fontWeight: 700, fontSize: 12.5, color: "rgba(242,227,191,.55)" }}
+            >
               {user.username || user.email}
             </span>
-            <button onClick={onLogout} className="font-bold cursor-pointer bg-card text-ink whitespace-nowrap" style={chip}>
-              Log out
-            </button>
+            <Ghost onClick={onLogout} style={{ minHeight: 42, padding: "0 20px", fontWeight: 800, fontSize: 13 }}>abjure</Ghost>
           </>
         ) : (
           <>
-            <span className="font-loud text-ink/45 hidden sm:inline" style={{ fontWeight: 700, fontSize: 12 }}>already playing?</span>
-            <button onClick={onOpenLogin} className="font-bold cursor-pointer bg-card text-ink whitespace-nowrap" style={chip}>
-              Log in
-            </button>
-            <button onClick={onOpenSignup} className="font-bold cursor-pointer bg-lime text-ink whitespace-nowrap" style={chip}>
-              Sign up
-            </button>
+            <span className="hidden sm:inline" style={{ fontWeight: 600, fontSize: 12.5, color: "rgba(242,227,191,.5)" }}>
+              already sworn in?
+            </span>
+            <Ghost onClick={onOpenLogin} style={{ minHeight: 42, padding: "0 20px", fontWeight: 800, fontSize: 13 }}>log in</Ghost>
           </>
         )}
-        <ThemeToggle />
+        </div>
       </header>
 
-      <div className="flex-1 flex items-center justify-center gap-8 sm:gap-14 flex-wrap px-4 pt-6 pb-8 sm:px-10 sm:pb-10">
-        {/* left — wordmark, tagline, stat stickers */}
-        <div className="w-full max-w-[430px]">
-          <div className="relative inline-block mb-3.5" style={{ transform: "rotate(-2deg)" }}>
-            <span
-              className="tape absolute"
-              style={{ top: -13, left: -14, width: 78, height: 26, transform: "rotate(-14deg)" }}
-            />
-            <h2 className="font-loud m-0" style={{ fontWeight: 800, fontSize: "clamp(46px, 12.5vw, 74px)", lineHeight: 0.92, letterSpacing: "-1px" }}>
-              Doodle
-              <br />
-              <span className="text-orange">Brawl</span>
-            </h2>
-          </div>
-          <p className="font-loud italic text-ink/60 m-0 mb-6" style={{ fontWeight: 700, fontSize: 19, lineHeight: 1.35, maxWidth: 340 }}>
-            Draw badly. Guess loudly. Win somehow.
-          </p>
-          <div className="flex gap-2 flex-wrap items-center">
-            <span
-              className="bg-lime text-ink px-3 py-1.5 font-bold text-xs"
-              style={{ border: "2.5px solid var(--outline)", borderRadius: 11, ...hardShadow(3, 3), transform: "rotate(-1.5deg)" }}
-            >
-              {playerCount == null ? "…" : playerCount.toLocaleString()} playing now
-            </span>
-            <span
-              className="bg-card text-ink px-3 py-1.5 font-bold text-xs"
-              style={{ border: "2.5px solid var(--outline)", borderRadius: 11, ...hardShadow(3, 3), transform: "rotate(1.5deg)" }}
-            >
-              up to 12 per room
-            </span>
-          </div>
-
-          {/* the two real actions of this column, grouped so the stickers above stay labels */}
-          <div className="mt-7 max-w-[380px] flex gap-2 items-stretch">
-            <span className="inline-block flex-1 min-w-0" style={{ transform: "rotate(0.4deg)" }}>
-              <button
-                type="button"
-                onClick={onOpenHistory}
-                className="w-full h-full font-bold cursor-pointer bg-card text-ink transition-transform hover:-translate-y-[1.5px] active:translate-y-[2px]"
-                style={{ border: "2.5px solid var(--outline)", borderRadius: 12, ...hardShadow(3, 3), padding: "11px 14px", fontSize: 13.5 }}
-              >
-                📜 Your match history
-              </button>
-            </span>
-            <span className="inline-block flex-none" style={{ transform: "rotate(-0.8deg)" }}>
-              <button
-                type="button"
-                onClick={() => setShowHelp(true)}
-                className="w-full h-full font-bold cursor-pointer bg-orange text-card whitespace-nowrap inline-flex items-center gap-1.5 transition-transform hover:-translate-y-[1.5px] active:translate-y-[2px]"
-                style={{ border: "2.5px solid var(--outline)", borderRadius: 12, ...hardShadow(3, 3), padding: "11px 13px 11px 11px", fontSize: 13.5 }}
-              >
-                <span className="grid place-items-center rounded-full bg-card text-orange flex-none"
-                  style={{ width: 17, height: 17, fontSize: 11.5, fontWeight: 800, lineHeight: 1 }}>?</span>
-                How to play
-              </button>
-            </span>
-          </div>
-        </div>
-
-        {/* right — the card */}
-        <div
-          className="relative bg-card box-border w-full max-w-[436px] p-[22px] sm:p-[30px] sm:pb-7"
-          style={{ transform: "rotate(1deg)", borderRadius: "10px 26px 12px 24px", boxShadow: "0 16px 34px rgba(58,47,38,.18)" }}
-        >
-          <span
-            className="tape absolute"
-            style={{ top: -15, left: "50%", transform: "translateX(-50%) rotate(-2deg)", width: 118, height: 30 }}
-          />
-
-          {/* invite mode heading — the room code came from the link, so we only ask for a name */}
-          {invite && (
-            <div style={{ margin: "8px 0 4px" }}>
-              <span className="font-mono uppercase text-ink/45 block mb-1" style={{ fontWeight: 700, fontSize: 10.5, letterSpacing: ".12em" }}>
-                You're invited
-              </span>
-              <h3 className="font-loud m-0" style={{ fontWeight: 800, fontSize: 26, lineHeight: 1.1 }}>
-                Join room{" "}
-                <span dir="auto" className="text-orange" style={{ letterSpacing: ".08em" }}>{inviteCode}</span>
-              </h3>
+      <div className="relative z-10 flex-1 grid place-items-center px-4 pb-10 pt-4 sm:px-8">
+        <div className="w-full max-w-[612px]">
+          {/* mobile: the wordmark sits on night, above the card */}
+          <div className="md:hidden text-center mb-6">
+            <Eyebrow dim={0.42} size={9.5} style={{ letterSpacing: ".3em" }}>est. the third age of doodling</Eyebrow>
+            <div className="mt-2">
+              <Wordmark size={50} onNight />
             </div>
-          )}
+            <p className="m-0 mt-3" style={{ fontFamily: "var(--font-loud)", fontStyle: "italic", fontWeight: 700, fontSize: 14.5, color: "rgba(242,227,191,.55)" }}>
+              Cast badly. Divine loudly. Ascend anyway.
+            </p>
+          </div>
 
-          {/* name + avatar */}
-          <div className="flex gap-3 sm:gap-4 items-center" style={{ margin: "12px 0 18px" }}>
-            <div className="relative flex-none">
-              <div
-                className="grid place-items-center font-loud text-card w-20 h-20 sm:w-24 sm:h-24 text-[26px] sm:text-[30px]"
-                style={{ borderRadius: "50%", background: colorOf(name, blob), boxShadow: "0 0 0 3px var(--card), 0 0 0 6px var(--outline)", fontWeight: 800, transform: "rotate(3deg)" }}
-              >
-                {initialsOf(name)}
+          <Card
+            className="torn-md relative box-border w-full p-[26px] sm:p-[34px] md:p-[44px_46px_40px]"
+            tilt={-1.1}
+            radius={18}
+          >
+            <Tape w={124} h={34} rotate={1.6} top={-19} />
+
+            {/* desktop heading, inside the card */}
+            <div className="hidden md:block text-center" style={{ marginBottom: 26 }}>
+              <InkEyebrow dim={0.42} size={11} style={{ letterSpacing: ".34em" }}>est. the third age of doodling</InkEyebrow>
+              <h1 className="display m-0" style={{ margin: "6px 0 2px", fontSize: 66, lineHeight: 0.9, color: "var(--ink-warm)" }}>
+                Scrawl <span style={{ color: "var(--magenta-deep)" }}>&amp;</span> Sorcery
+              </h1>
+              <p className="m-0" style={{ marginTop: 8, fontFamily: "var(--font-loud)", fontStyle: "italic", fontWeight: 700, fontSize: 17, lineHeight: 1.3, color: "rgba(58,47,38,.62)" }}>
+                Cast badly. Divine loudly. Ascend anyway.
+              </p>
+            </div>
+
+            {invite && (
+              <div className="mb-5">
+                <InkEyebrow dim={0.45} size={10}>the circle has summoned you</InkEyebrow>
+                <h2 className="display m-0 mt-1.5" style={{ fontSize: 32, color: "var(--ink-warm)" }}>
+                  Join <span dir="auto" style={{ color: "var(--magenta-deep)", letterSpacing: ".08em" }}>{inviteCode}</span>
+                </h2>
               </div>
-              <button
-                onClick={() => setBlob((b) => b + 1)}
-                title="New look"
-                className="absolute grid place-items-center cursor-pointer font-bold bg-lime text-ink"
-                style={{ right: -8, bottom: -8, width: 34, height: 34, border: "2.5px solid var(--outline)", borderRadius: 12, boxShadow: "2px 2px 0 var(--outline)", fontSize: 15 }}
-              >
-                ↻
-              </button>
-            </div>
-            <div className="flex-1 min-w-0">
-              <label className="block mb-1.5 font-mono uppercase text-ink/45" style={{ fontWeight: 700, fontSize: 10.5, letterSpacing: ".12em" }}>
-                Your name
-              </label>
-              <input
-                value={name}
-                onChange={(e) => { setName(e.target.value); if (nameError) setNameError(false); }}
-                placeholder="Jelly Bandit"
-                className="font-loud w-full bg-transparent outline-none text-ink border-b-[3px] border-dashed border-ink/40 placeholder:text-ink/30 text-[21px] sm:text-[24px]"
-                style={{ padding: "2px 2px 9px", fontWeight: 700 }}
-              />
-              {nameError && (
-                <span
-                  className="inline-block mt-2 font-bold bg-card text-rose"
-                  style={{ border: "2px solid var(--rose)", borderRadius: 9, padding: "3px 9px", fontSize: 12, transform: "rotate(-1.5deg)" }}
-                >
-                  pick a name first
+            )}
+
+            {/* the apprentice */}
+            <div className="flex items-center gap-4 md:gap-[18px]" style={{ marginBottom: 24 }}>
+              <div className="relative flex-none">
+                <span className="md:hidden inline-grid">
+                  <Avatar name={name || "apprentice"} avatar={mine} size={88} ring surface="parchment" />
                 </span>
-              )}
-            </div>
-          </div>
+                <span className="hidden md:inline-grid">
+                  <Avatar name={name || "apprentice"} avatar={mine} size={104} ring surface="parchment" />
+                </span>
+                <button
+                  onClick={rerollMyAvatar}
+                  title="another look"
+                  className="absolute grid place-items-center cursor-pointer"
+                  style={{
+                    right: -12, bottom: -6, width: 38, height: 38,
+                    border: "2.5px solid var(--ink-warm)", borderRadius: "13px 11px 14px 10px",
+                    background: "var(--green)", color: "var(--ink-warm)",
+                    boxShadow: "2px 2px 0 var(--ink-warm)", fontSize: 16, fontWeight: 700,
+                  }}
+                >
+                  ↻
+                </button>
+              </div>
 
-          {/* room code — hidden in invite mode (the code comes from the link) */}
-          {!invite && (
-            <>
-              <label className="block mb-1.5 font-mono uppercase text-ink/45" style={{ fontWeight: 700, fontSize: 10.5, letterSpacing: ".12em" }}>
-                Room code
-              </label>
-              <input
-                value={code}
-                onChange={(e) => setCode(e.target.value.toUpperCase())}
-                placeholder="PLZ-4NT"
-                className="font-loud w-full box-border outline-none paper-bg text-ink border-[2.5px] border-dashed border-ink/35 placeholder:text-ink/30 mb-5"
-                style={{ borderRadius: 14, padding: "13px 15px", fontWeight: 700, fontSize: 19, letterSpacing: ".2em" }}
-              />
-            </>
+              <div className="flex-1 min-w-0">
+                <InkEyebrow dim={0.45} size={10.5} className="mb-1.5" style={{ letterSpacing: ".12em" }}>Thy name, apprentice</InkEyebrow>
+                <input
+                  value={name}
+                  onChange={(e) => { setName(e.target.value); if (nameError) setNameError(false); }}
+                  placeholder="Gorbo the Damp"
+                  maxLength={24}
+                  className={`field ${nameError ? "field-invalid" : ""}`}
+                  style={{ fontSize: "clamp(16px, 4.6vw, 25px)" }}
+                />
+                {nameError ? (
+                  <p className="m-0 mt-2" style={{ fontWeight: 600, fontSize: 11.5, color: "var(--red)" }}>
+                    a wizard without a name divines nothing
+                  </p>
+                ) : (
+                  <p className="m-0" style={{ marginTop: 9, fontWeight: 500, fontSize: 12, lineHeight: 1, color: "rgba(58,47,38,.45)" }}>
+                    ↻ conjures a new familiar
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {joinError && (
+              <p className="m-0 mb-4" style={{ fontWeight: 600, fontSize: 12, color: "var(--red)" }}>{joinError}</p>
+            )}
+
+            {invite ? (
+              <Btn tone="magenta" className="w-full" size={24} radius="34px 30px 34px 28px" onClick={tryInviteJoin}>
+                CAST ME IN ✦
+              </Btn>
+            ) : (
+              <>
+                <Btn tone="magenta" className="w-full" size={26} radius="34px 30px 34px 28px" style={{ minHeight: 62 }} onClick={tryQuick}>
+                  CAST ME IN ✦
+                </Btn>
+                <Btn2 className="w-full mt-3" size={16} radius="30px 34px 28px 32px" onClick={tryPrivate}>
+                  summon a private circle
+                </Btn2>
+
+                <div className="my-5">
+                  <DashDivider label="or speak the word" night={false} />
+                </div>
+
+                <div className="flex gap-2.5 items-stretch">
+                  <input
+                    value={code}
+                    onChange={(e) => setCode(e.target.value.toUpperCase())}
+                    onKeyDown={(e) => { if (e.key === "Enter") tryJoin(); }}
+                    placeholder="ᛗ Ø R B — 4 2"
+                    className="field-box flex-1 min-w-0"
+                    style={{ fontSize: "clamp(14px, 4.2vw, 17px)", letterSpacing: ".14em", minHeight: 52 }}
+                    dir="auto"
+                  />
+                  <Btn
+                    tone="teal"
+                    size={20}
+                    radius="16px 20px 14px 18px"
+                    onClick={tryJoin}
+                    style={{ minHeight: 52, padding: "0 20px", boxShadow: "3px 3px 0 var(--ink-warm)" }}
+                  >
+                    GO
+                  </Btn>
+                </div>
+              </>
+            )}
+          </Card>
+
+          {playerCount != null && (
+            <p className="lg:hidden text-center m-0 mt-6" style={{ fontWeight: 600, fontSize: 12, color: "rgba(242,227,191,.35)" }}>
+              {playerCount.toLocaleString()} {playerCount === 1 ? "wizard is" : "wizards are"} awake in the third age
+            </p>
           )}
 
-          {/* server-side error (e.g. room not found), shown inline above the actions */}
-          {joinError && (
-            <div
-              className="font-bold bg-card text-rose mb-4"
-              style={{ border: "2px solid var(--rose)", borderRadius: 10, padding: "8px 12px", fontSize: 13, transform: "rotate(-0.8deg)" }}
-            >
-              {joinError}
+          {!user && (
+            <div className="sm:hidden flex items-center justify-center gap-2.5 mt-7">
+              <span style={{ fontWeight: 600, fontSize: 12.5, color: "rgba(242,227,191,.5)" }}>no papers yet?</span>
+              <button onClick={onOpenSignup} className="cursor-pointer underline" style={{ background: "transparent", border: 0, fontFamily: "var(--font-loud)", fontWeight: 700, fontSize: 13, color: "var(--gold-bright)" }}>
+                conjure an account
+              </button>
             </div>
-          )}
-
-          {/* actions */}
-          {invite ? (
-            // invite mode: a single primary button that joins the linked room
-            <button
-              onClick={tryInviteJoin}
-              className="font-loud w-full text-card cursor-pointer bg-orange text-[22px] sm:text-[24px]"
-              style={{ border: "3px solid var(--outline)", borderRadius: "34px 30px 34px 28px", padding: "16px 0", fontWeight: 800, ...hardShadow(5, 6) }}
-            >
-              Join <span dir="auto">{inviteCode}</span>
-            </button>
-          ) : (
-            // normal mode: join the entered code, or make a fresh room
-            <>
-              <button
-                onClick={tryJoin}
-                className="font-loud w-full mb-3 text-card cursor-pointer bg-orange text-[24px] sm:text-[27px]"
-                style={{ border: "3px solid var(--outline)", borderRadius: "34px 30px 34px 28px", padding: "16px 0", fontWeight: 800, ...hardShadow(5, 6) }}
-              >
-                Play now!
-              </button>
-              <button
-                onClick={tryCreate}
-                className="font-loud w-full text-ink cursor-pointer bg-card text-[16px] sm:text-[17px]"
-                style={{ border: "3px solid var(--outline)", borderRadius: "30px 34px 28px 34px", padding: "13px 0", fontWeight: 700, ...hardShadow(5, 6) }}
-              >
-                Make a room
-              </button>
-            </>
           )}
         </div>
       </div>
 
+      {/* the corners: what the guild remembers, and what it is burning */}
+      <button
+        onClick={() => setShowHelp(true)}
+        className="absolute z-10 cursor-pointer"
+        style={{ left: 22, bottom: 26, background: "transparent", border: 0, fontWeight: 600, fontSize: 12.5, color: "rgba(242,227,191,.5)" }}
+      >
+        the rules of the rite
+      </button>
+
+      <span className="hidden lg:block">
+        <CandleOrnament playerCount={playerCount} />
+      </span>
+
       {showHelp && (
-        <div
-          className="fixed inset-0 z-50 grid place-items-center p-4 sm:p-5"
-          style={{ background: "rgba(58,47,38,.45)" }}
-          onClick={() => setShowHelp(false)}
-        >
-          <div
-            className="relative bg-card w-full max-w-[420px] p-[22px] sm:p-[26px]"
-            onClick={(e) => e.stopPropagation()}
-            style={{ border: "3px solid var(--outline)", borderRadius: "18px 8px 20px 10px", boxShadow: "0 16px 34px rgba(58,47,38,.3)", transform: "rotate(-1deg)" }}
+        <div className="fixed inset-0 z-50 grid place-items-center p-4 fade-in" style={{ background: "rgba(13,7,24,.7)" }} onClick={() => setShowHelp(false)}>
+          <Card
+            className="relative w-full max-w-[440px] p-[24px] sm:p-[28px]"
+            tilt={-1}
+            radius="20px 14px 22px 12px"
+            style={{ boxShadow: "6px 7px 0 rgba(0,0,0,.5)" }}
           >
-            <span className="tape absolute" style={{ top: -13, left: 24, width: 96, height: 26, transform: "rotate(-4deg)" }} />
-            <h3 className="font-loud m-0 mb-3" style={{ fontWeight: 800, fontSize: 26 }}>How to play</h3>
-            <ul className="m-0 pl-5 text-ink/80 list-disc marker:text-orange space-y-2" style={{ fontSize: 14, lineHeight: 1.55, fontWeight: 500 }}>
-              <li>One player draws a secret word — everyone else races to guess it in chat.</li>
-              <li>Guess sooner to score more. The drawer earns points for each correct guess.</li>
-              <li>Letters get revealed as hints while the clock winds down.</li>
-              <li>Most points after the final round wins the brawl.</li>
-              <li>Every finished match is saved — drawings and chat included — even when you play as a guest. Sign up to keep that history on an account instead of just this browser.</li>
-            </ul>
-            <button
-              onClick={() => setShowHelp(false)}
-              className="font-loud w-full mt-5 text-card cursor-pointer bg-orange"
-              style={{ border: "3px solid var(--outline)", borderRadius: "28px 32px 28px 32px", padding: "12px 0", fontWeight: 800, fontSize: 18, ...hardShadow(4, 5) }}
-            >
-              Got it
-            </button>
-          </div>
+            <div onClick={(e) => e.stopPropagation()}>
+              <Tape w={96} h={26} rotate={-4} top={-13} left={24} />
+              <InkEyebrow dim={0.45} size={10} className="mt-1">the rules of the rite</InkEyebrow>
+              <h3 className="display m-0 mt-1.5 mb-4" style={{ fontSize: 34, color: "var(--ink-warm)" }}>How one plays</h3>
+              <ul className="m-0 pl-5 list-disc space-y-2.5" style={{ color: "rgba(58,47,38,.75)", fontSize: 13.5, lineHeight: 1.5, fontWeight: 600 }}>
+                <li>Each round one wizard is the <b>caster</b>: they pick a spell and draw it, badly.</li>
+                <li>Everyone else <b>divines</b> — type your guess into the murmurings. Sooner is worth more.</li>
+                <li>Letters surface as the candle burns. The caster earns from every wizard who gets it.</li>
+                <li>Highest score when the candles go out <b>ascends</b>, and is insufferable about it.</li>
+                <li>Every rite is written to the chronicle — even for wandering strangers. An account keeps it beyond this browser.</li>
+              </ul>
+              <Btn tone="gold" className="w-full mt-6" size={20} radius="28px 32px 26px 30px" onClick={() => setShowHelp(false)}>
+                UNDERSTOOD
+              </Btn>
+            </div>
+          </Card>
         </div>
       )}
-    </div>
+    </Night>
   );
 }

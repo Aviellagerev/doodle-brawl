@@ -26,6 +26,7 @@ export class RoomStore {
     if (existingPlayerIndex !== -1) {
       console.log(`Player ${newPlayer.name} reconnected! Updating socket...`);
       room.players[existingPlayerIndex].socketId = newPlayer.socketId;
+      room.players[existingPlayerIndex].avatar = newPlayer.avatar;   // a reroll follows them back in
     } else {
       room.players.push(newPlayer);
     }

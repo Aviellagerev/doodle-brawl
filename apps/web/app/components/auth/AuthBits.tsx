@@ -1,54 +1,126 @@
 "use client";
 
 import { useState } from "react";
+import { InkEyebrow } from "../ui/Bits";
 
-export const hardShadow = (x: number, y: number) => ({ boxShadow: `${x}px ${y}px 0 var(--outline)` });
-export const EYEBROW = { fontWeight: 700, fontSize: 10, letterSpacing: ".12em" } as const;
+/** Field kit for the parchment cards — no boxes, just a dashed rule under the value. */
 
-export const FIELD =
-  "font-loud w-full box-border outline-none paper-bg text-ink " +
-  "border-[2.5px] border-dashed border-ink/35 placeholder:text-ink/30";
-export const FIELD_STYLE = { borderRadius: 12, padding: "11px 14px", fontWeight: 700, fontSize: 16.5 } as const;
-
-export function Label({ children }: { children: React.ReactNode }) {
-  return <label className="block mb-1.5 font-mono uppercase text-ink/45" style={EYEBROW}>{children}</label>;
-}
-
-export function Wordmark({ size = 46 }: { size?: number }) {
+export function Label({ children, right }: { children: React.ReactNode; right?: React.ReactNode }) {
   return (
-    <div className="relative inline-block" style={{ transform: "rotate(-1.5deg)" }}>
-      <span className="tape absolute" style={{ top: -11, left: -12, width: 62, height: 22, transform: "rotate(-13deg)" }} />
-      <h1 className="font-loud m-0" style={{ fontWeight: 800, fontSize: size, lineHeight: 0.95, letterSpacing: "-0.5px" }}>
-        Doodle <span className="text-orange">Brawl</span>
-      </h1>
+    <div className="flex items-baseline justify-between mb-2">
+      <InkEyebrow dim={0.5} size={9.5}>{children}</InkEyebrow>
+      {right}
     </div>
   );
 }
 
-export function ErrorSticker({ text }: { text: string }) {
+export function TextField({
+  label, value, onChange, placeholder, type = "text", autoComplete, valid, error, size = 20, maxLength,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  type?: string;
+  autoComplete?: string;
+  valid?: boolean;
+  error?: string | null;
+  size?: number;
+  maxLength?: number;
+}) {
   return (
-    <span className="inline-block mt-3 font-bold bg-card text-rose"
-          style={{ border: "2px solid var(--rose)", borderRadius: 9, padding: "5px 11px", fontSize: 12.5, transform: "rotate(-1.2deg)" }}>
-      {text}
-    </span>
+    <div>
+      <Label>{label}</Label>
+      <div className="relative">
+        <input
+          type={type}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          autoComplete={autoComplete}
+          maxLength={maxLength}
+          className={`field ${valid ? "field-valid" : ""} ${error ? "field-invalid" : ""}`}
+          style={{ fontSize: size, paddingRight: valid ? 24 : undefined }}
+        />
+        {valid && (
+          <span className="absolute right-0 bottom-2.5" style={{ color: "oklch(0.55 0.16 145)", fontSize: 16, fontWeight: 700 }}>✓</span>
+        )}
+      </div>
+      {error && <p className="m-0 mt-2" style={{ fontWeight: 600, fontSize: 11.5, color: "var(--red)" }}>{error}</p>}
+    </div>
   );
 }
 
-export function PasswordField({
-  value, onChange, placeholder, autoComplete,
-}: { value: string; onChange: (v: string) => void; placeholder: string; autoComplete: string }) {
+export function SecretField({
+  label = "Secret word", value, onChange, placeholder, autoComplete, valid, error, size = 20,
+}: {
+  label?: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  autoComplete?: string;
+  valid?: boolean;
+  error?: string | null;
+  size?: number;
+}) {
   const [reveal, setReveal] = useState(false);
   return (
-    <>
-      <div className="flex items-baseline justify-between mb-1.5">
-        <label className="font-mono uppercase text-ink/45" style={EYEBROW}>Password</label>
-        <button type="button" onClick={() => setReveal(!reveal)}
-                className="font-mono uppercase cursor-pointer text-ink/45 hover:text-ink" style={{ ...EYEBROW, fontSize: 9.5 }}>
-          {reveal ? "hide" : "reveal"}
-        </button>
+    <div>
+      <Label
+        right={
+          <button
+            type="button"
+            onClick={() => setReveal(!reveal)}
+            className="eyebrow cursor-pointer"
+            style={{ fontSize: 9, color: "rgba(58,47,38,.45)", background: "transparent", border: 0 }}
+          >
+            {reveal ? "conceal" : "reveal"}
+          </button>
+        }
+      >
+        {label}
+      </Label>
+      <div className="relative">
+        <input
+          type={reveal ? "text" : "password"}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          autoComplete={autoComplete}
+          className={`field ${valid ? "field-valid" : ""} ${error ? "field-invalid" : ""}`}
+          style={{ fontSize: size, paddingRight: valid ? 24 : undefined }}
+        />
+        {valid && (
+          <span className="absolute right-0 bottom-2.5" style={{ color: "oklch(0.55 0.16 145)", fontSize: 16, fontWeight: 700 }}>✓</span>
+        )}
       </div>
-      <input type={reveal ? "text" : "password"} value={value} onChange={(e) => onChange(e.target.value)}
-             placeholder={placeholder} autoComplete={autoComplete} className={FIELD} style={FIELD_STYLE} />
-    </>
+      {error && <p className="m-0 mt-2" style={{ fontWeight: 600, fontSize: 11.5, color: "var(--red)" }}>{error}</p>}
+    </div>
+  );
+}
+
+/** A server-side failure, in the caster's own hand. */
+export function ErrorLine({ text }: { text: string }) {
+  return (
+    <p className="m-0 mt-4" style={{ fontWeight: 600, fontSize: 12, color: "var(--red)", lineHeight: 1.4 }}>
+      {text}
+    </p>
+  );
+}
+
+/** The link-shaped line under a card. */
+export function FootLink({ lead, action, onClick }: { lead: string; action: string; onClick: () => void }) {
+  return (
+    <p className="text-center m-0 mt-6" style={{ fontWeight: 600, fontSize: 12.5, color: "rgba(242,227,191,.5)" }}>
+      {lead}{" "}
+      <button
+        type="button"
+        onClick={onClick}
+        className="cursor-pointer underline"
+        style={{ background: "transparent", border: 0, color: "var(--gold-bright)", fontFamily: "var(--font-loud)", fontWeight: 700, fontSize: 13 }}
+      >
+        {action}
+      </button>
+    </p>
   );
 }

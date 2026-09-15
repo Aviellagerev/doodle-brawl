@@ -29,11 +29,11 @@ export default function ReplayCanvas({ turnId }: { turnId: string }) {
   }, [turnId]);
 
   return (
-    <div className="relative mt-3" style={{ borderRadius: 12, overflow: "hidden", border: "2.5px solid var(--outline)" }}>
-      <canvas ref={ref} width={640} height={400} className="block w-full h-auto" style={{ background: "var(--canvas)" }} />
+    <div className="relative mt-3" style={{ borderRadius: 10, overflow: "hidden", border: "3px solid var(--ink-warm)" }}>
+      <canvas ref={ref} width={640} height={400} className="block w-full h-auto" style={{ background: "var(--parchment-bright)", backgroundImage: "repeating-linear-gradient(118deg, rgba(120,95,60,.05) 0 2px, transparent 2px 8px)" }} />
       {state !== "ok" && (
-        <div className="absolute inset-0 grid place-items-center font-loud italic text-ink/50" style={{ fontWeight: 700, fontSize: 14 }}>
-          {state === "loading" ? "unrolling…" : "drawing unavailable"}
+        <div className="absolute inset-0 grid place-items-center" style={{ fontFamily: "var(--font-loud)", fontStyle: "italic", fontWeight: 700, fontSize: 14, color: "rgba(58,47,38,.5)" }}>
+          {state === "loading" ? "unrolling…" : "the vellum is lost"}
         </div>
       )}
     </div>

@@ -81,6 +81,7 @@ export interface Player {
   name: string;
   score?: number;
   isHost?: boolean;
+  avatar?: PlayerAvatar;     // chosen when joining; broadcast so everyone sees the same familiar
 }
 
 export type GameMode = "skribbl";
@@ -231,4 +232,35 @@ export interface ChatEntry {
 }
 export function cleanName(v: unknown): string {
     return String(v ?? "").trim().slice(0, MAX_NAME_LEN) || "Player";
+}
+
+/* ── Familiars ──────────────────────────────────────────────────────────────
+   Hand-drawn sprites in apps/web/public/avatars. A familiar is one animal plus
+   a hat worn on top — both drawn on the same 96×96 canvas, so they register
+   when stacked. The pick is random on joining, and the owner can reroll it. */
+
+export const AVATAR_ANIMALS = ["cat", "cow", "duck", "frog"] as const;
+export const AVATAR_HATS = ["apprentice", "cowboy", "party", "wizard"] as const;
+
+export type AvatarAnimal = (typeof AVATAR_ANIMALS)[number];
+export type AvatarHat = (typeof AVATAR_HATS)[number];
+
+export interface PlayerAvatar {
+  animal: AvatarAnimal;
+  hat: AvatarHat | null;
+}
+
+const pick = <T,>(list: readonly T[]): T => list[Math.floor(Math.random() * list.length)];
+
+export function randomAvatar(): PlayerAvatar {
+  return { animal: pick(AVATAR_ANIMALS), hat: pick(AVATAR_HATS) };
+}
+
+/** Trust nothing off the wire: fall back to a random familiar. */
+export function cleanAvatar(v: unknown): PlayerAvatar {
+  const raw = (v ?? {}) as Partial<PlayerAvatar>;
+  const animal = AVATAR_ANIMALS.includes(raw.animal as AvatarAnimal) ? (raw.animal as AvatarAnimal) : null;
+  if (!animal) return randomAvatar();
+  const hat = AVATAR_HATS.includes(raw.hat as AvatarHat) ? (raw.hat as AvatarHat) : null;
+  return { animal, hat };
 }

@@ -1,4 +1,4 @@
-import { RoomState, Player, GameMode } from "../../../../packages/shared/index.js";
+import { RoomState, Player, GameMode, PlayerAvatar, randomAvatar } from "../../../../packages/shared/index.js";
 import { DEFAULT_SETTINGS } from "../game/skribbl.js";
 
 
@@ -12,9 +12,10 @@ export function generateRoomCode(): string {
     return result;
 }
 export function createNewPlayer(
-  { id, socketId, name, isHost }: { id: string; socketId: string; name: string; isHost: boolean }
+  { id, socketId, name, isHost, avatar }:
+    { id: string; socketId: string; name: string; isHost: boolean; avatar?: PlayerAvatar }
 ): Player {
-  return { id, socketId, name, score: 0, isHost };
+  return { id, socketId, name, score: 0, isHost, avatar: avatar ?? randomAvatar() };
 }
 
 export function createNewRoom(host: Player, mode: GameMode = "skribbl"): RoomState {

@@ -1,26 +1,38 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { ChatMessage } from "../../../../../packages/shared";
-import { colorOf } from "../../lib/avatar";
+import { ChatMessage, Player } from "../../../../../packages/shared";
+import { chatColorOf } from "../../lib/avatar";
+import { Eyebrow } from "../ui/Bits";
 
 type Props = {
   messages: ChatMessage[];
   onSend: (text: string) => void;
-
+  /** so a name can be tinted with that player's own familiar */
+  players?: Player[];
   variant?: "sidebar" | "fill";
-  title?: string;               // mono-caps header label (default "Chat")
-  
+  title?: string;
   inputDisabled?: boolean;
   disabledNote?: string;
 };
 
-export default function Chat({ messages, onSend, variant = "sidebar", title = "Chat", inputDisabled = false, disabledNote = "no typing — you know the word" }: Props) {
+/**
+ * The murmurings. Four line types — guess, system aside, settings pill and the
+ * green "divined it" pill — newest at the bottom.
+ */
+export default function Chat({
+  messages,
+  onSend,
+  players = [],
+  variant = "sidebar",
+  title = "the murmurings",
+  inputDisabled = false,
+  disabledNote = "you may not speak — you cast",
+}: Props) {
   const [draft, setDraft] = useState("");
   const listRef = useRef<HTMLDivElement | null>(null);
   const atBottomRef = useRef(true);
 
-  // Pin to the newest message, but don't yank the user down while they've
-  // scrolled up to read history.
+  // Pin to the newest line, but don't yank the reader down mid-scroll.
   useEffect(() => {
     const el = listRef.current;
     if (el && atBottomRef.current) el.scrollTop = el.scrollHeight;
@@ -36,48 +48,72 @@ export default function Chat({ messages, onSend, variant = "sidebar", title = "C
     e.preventDefault();
     const text = draft.trim();
     if (!text) return;
-    atBottomRef.current = true; // sending my own message always jumps to it
+    atBottomRef.current = true;
     onSend(text);
     setDraft("");
   }
 
-  // outer sizing differs by variant; the inner flex column is identical.
-  // fill (in-game): mobile fills the remaining column height, desktop self-stretches
-  //   to the viewport-bounded game row so the pinned input is always on screen.
-  // sidebar (lobby / game-over): capped to the viewport so the input stays reachable.
   const outer =
     variant === "fill"
-      ? "order-3 w-full flex-1 min-h-0 lg:order-3 lg:flex-none lg:w-[284px] lg:self-stretch"
-      : "w-full lg:w-[284px] flex-none h-[46vh] lg:h-[620px] lg:max-h-[calc(100dvh_-_2rem)]";
+      ? "order-3 w-full flex-1 min-h-0 lg:order-3 lg:flex-none lg:w-[262px] lg:self-stretch"
+      : "w-full lg:w-[300px] flex-none h-[46vh] lg:h-[620px] lg:max-h-[calc(100dvh_-_2rem)]";
 
   return (
-    <div
-      className={`${outer} bg-card flex flex-col`}
-      style={{ borderRadius: "18px 8px 18px 8px", boxShadow: "0 8px 20px rgba(58,47,38,.12)", padding: 14 }}
-    >
-      <div className="font-mono uppercase text-ink/45 mb-3" style={{ fontWeight: 700, fontSize: 10, letterSpacing: ".12em" }}>
-        {title}
-      </div>
+    <div className={`${outer} flex flex-col min-w-0`}>
+      <Eyebrow dim={0.42} size={9.5} className="mb-3.5">{title}</Eyebrow>
 
-      <div ref={listRef} onScroll={onScroll} className="flex-1 min-h-0 flex flex-col gap-2 overflow-y-auto" style={{ fontSize: 12.5, lineHeight: 1.4 }}>
+      <div
+        ref={listRef}
+        onScroll={onScroll}
+        className="flex-1 min-h-0 flex flex-col gap-2 overflow-y-auto"
+        style={{ fontSize: 12.5, lineHeight: 1.45 }}
+      >
         {messages.map((m, i) => {
           if (m.kind === "chat") {
             return (
-              <div key={i}>
-                <b style={{ color: colorOf(m.author), fontWeight: 700 }}>{m.author}</b> <span dir="auto">{m.text}</span>
+              <div key={i} style={{ fontWeight: 600, color: "rgba(242,227,191,.78)" }}>
+                <b style={{ color: chatColorOf(m.author, players.find((p) => p.id === m.playerId || p.name === m.author)?.avatar), fontWeight: 700 }}>{m.author}</b>{" "}
+                <span dir="auto">{m.text}</span>
               </div>
             );
           }
           if (m.kind === "correct") {
             return (
-              <div key={i} className="font-bold" style={{ background: "color-mix(in srgb, var(--lime) 30%, transparent)", border: "2px solid var(--lime)", borderRadius: 11, padding: "7px 10px", color: "color-mix(in srgb, var(--ink) 80%, var(--lime))" }}>
+              <div
+                key={i}
+                style={{
+                  background: "var(--green-bg)",
+                  color: "var(--green-text)",
+                  borderRadius: 10,
+                  padding: "8px 11px",
+                  fontWeight: 700,
+                  fontSize: 12,
+                }}
+              >
+                ✦ {m.text}
+              </div>
+            );
+          }
+          // a settings change reads as a pill; everything else is a murmured aside
+          if (m.text.startsWith("⚙")) {
+            return (
+              <div
+                key={i}
+                style={{
+                  background: "rgba(242,227,191,.08)",
+                  color: "rgba(242,227,191,.55)",
+                  borderRadius: 9,
+                  padding: "8px 11px",
+                  fontWeight: 600,
+                  fontSize: 11.5,
+                }}
+              >
                 {m.text}
               </div>
             );
           }
-          // system
           return (
-            <div key={i} className="font-loud italic text-ink/45" style={{ fontSize: 12 }}>
+            <div key={i} style={{ fontStyle: "italic", fontWeight: 600, fontSize: 12, color: "rgba(242,227,191,.5)" }}>
               {m.text}
             </div>
           );
@@ -86,27 +122,28 @@ export default function Chat({ messages, onSend, variant = "sidebar", title = "C
 
       {inputDisabled ? (
         <div
-          className="mt-3 paper-bg font-loud italic text-ink/40"
-          style={{ border: "2.5px dashed color-mix(in srgb, var(--ink) 30%, transparent)", borderRadius: 12, padding: "11px 13px", fontSize: 12, fontWeight: 600 }}
+          className="mt-3.5 outline-only text-center"
+          style={{ padding: "13px 12px", fontStyle: "italic", fontWeight: 600, fontSize: 12, color: "rgba(242,227,191,.42)" }}
         >
           {disabledNote}
         </div>
       ) : (
-        <form onSubmit={submit} className="mt-3 flex gap-2">
+        <form onSubmit={submit} className="mt-3.5 flex gap-2.5">
           <input
             value={draft}
             dir="auto"
             onChange={(e) => setDraft(e.target.value)}
-            placeholder="say something…"
-            className="flex-1 min-w-0 paper-bg text-ink outline-none placeholder:text-ink/35"
-            style={{ border: "2.5px dashed color-mix(in srgb, var(--ink) 30%, transparent)", borderRadius: 12, padding: "9px 12px", fontSize: 12.5 }}
+            placeholder="mutter something…"
+            className="field-box field-box-night flex-1 min-w-0"
+            style={{ fontSize: 12.5, minHeight: 46, padding: "10px 13px" }}
           />
           <button
             type="submit"
-            className="font-bold text-card cursor-pointer bg-cyan"
-            style={{ border: "2.5px solid var(--outline)", borderRadius: 12, boxShadow: "2.5px 2.5px 0 var(--outline)", padding: "0 13px", fontSize: 12 }}
+            aria-label="send"
+            className="btn btn-magenta flex-none grid place-items-center"
+            style={{ width: 46, height: 46, borderRadius: "14px 12px 15px 13px", fontSize: 17, boxShadow: "3px 3px 0 var(--ink-warm)" }}
           >
-            Send
+            ↑
           </button>
         </form>
       )}
