@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { Socket } from "socket.io-client";
 import { DrawSegment, DrawOp, DrawEntry } from "../../../../../packages/shared";
 
-type Props = { isDrawer: boolean; socket: Socket | null };
+type Props = { isDrawer: boolean; socket: Socket | null; fill?: boolean };
 
 type Tool = "pencil" | "eraser" | "line" | "rect" | "ellipse" | "fill";
 
@@ -20,6 +20,8 @@ const PALETTE = [
     "oklch(0.65 0.14 290)", "oklch(0.75 0.13 340)",
 ];
 const SIZES = [4, 8, 14, 22];
+// how big each nib reads in the toolbar (the reference uses 9 / 15 / 23)
+const NIB_DOT = [9, 13, 18, 23];
 
 const TOOLS: { id: Tool; glyph: string; title: string }[] = [
     { id: "pencil", glyph: "✎", title: "Brush" },
@@ -112,7 +114,7 @@ function floodFill(
     ctx.putImageData(img, 0, 0);
 }
 
-export default function DrawingBoard({ isDrawer, socket }: Props) {
+export default function DrawingBoard({ isDrawer, socket, fill = false }: Props) {
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
     const drawingRef = useRef(false);
     const lastRef = useRef<{ x: number; y: number } | null>(null);
@@ -128,6 +130,7 @@ export default function DrawingBoard({ isDrawer, socket }: Props) {
     const [width, setWidth] = useState(SIZES[1]);
     const [tool, setTool] = useState<Tool>("pencil");
     const [canUndo, setCanUndo] = useState(false);
+    const [confirmClear, setConfirmClear] = useState(false);   // "banish all" asks once
 
     useEffect(() => { toolRef.current = tool; }, [tool]);
 
@@ -373,46 +376,61 @@ export default function DrawingBoard({ isDrawer, socket }: Props) {
 
     return (
         <div className="flex-1 min-w-0 flex flex-col gap-3">
-            <canvas
-                ref={canvasRef}
-                width={800}
-                height={600}
-                onPointerDown={handlePointerDown}
-                onPointerMove={handlePointerMove}
-                onPointerUp={handlePointerUp}
-                onPointerLeave={handlePointerUp}
-                className="w-full touch-none cursor-crosshair h-[320px] sm:h-[400px] lg:h-[460px]"
-                style={{
-                    background: "var(--canvas)",
-                    backgroundImage: "radial-gradient(rgba(58,47,38,.09) 1.2px, transparent 1.2px)",
-                    backgroundSize: "26px 26px",
-                    border: "3px solid var(--outline)",
-                    borderRadius: 6,
-                    boxShadow: "0 10px 22px rgba(58,47,38,.14)",
-                }}
-            />
+            {/* the scrying vellum */}
+            <div className={`relative w-full ${fill ? "lg:flex-1 lg:min-h-0" : ""}`}>
+                <canvas
+                    ref={canvasRef}
+                    width={800}
+                    height={600}
+                    onPointerDown={handlePointerDown}
+                    onPointerMove={handlePointerMove}
+                    onPointerUp={handlePointerUp}
+                    onPointerLeave={handlePointerUp}
+                    className={`w-full block touch-none h-[300px] sm:h-[400px] ${fill ? "lg:h-full" : "lg:h-[460px]"}`}
+                    style={{
+                        background: "var(--parchment-bright)",
+                        backgroundImage: "repeating-linear-gradient(118deg, rgba(120,95,60,.05) 0 2px, transparent 2px 8px)",
+                        border: "3px solid var(--ink-warm)",
+                        borderRadius: 10,
+                        boxShadow: "5px 6px 0 rgba(0,0,0,.45)",
+                        cursor: isDrawer ? "crosshair" : "default",
+                    }}
+                />
+                <span aria-hidden className="absolute pointer-events-none" style={{ inset: 11, border: "2px dashed rgba(58,47,38,.16)", borderRadius: 6 }} />
+                <span aria-hidden className="absolute eyebrow pointer-events-none" style={{ top: 14, left: 18, fontSize: 10, letterSpacing: ".2em", color: "rgba(58,47,38,.3)" }}>
+                    scrying vellum
+                </span>
+            </div>
 
             {isDrawer && (
-                <div className="bg-card flex items-center flex-wrap gap-x-3 gap-y-2" style={{ borderRadius: 16, boxShadow: "0 8px 20px rgba(58,47,38,.12)", padding: "12px 14px" }}>
-                    {/* palette */}
-                    <div className="grid" style={{ gridTemplateColumns: "repeat(11, 18px)", gridAutoRows: 18, gap: 3 }}>
+                <div className="flex items-center flex-wrap gap-2" style={{ background: "var(--ink-warm)", borderRadius: 13, padding: "9px 11px" }}>
+                    {/* pigments */}
+                    <div
+                        className="grid"
+                        style={{ gridTemplateColumns: "repeat(11, 26px)", gridAutoRows: 26, gap: 7, paddingRight: 10, borderRight: "2px dashed rgba(242,227,191,.25)" }}
+                    >
                         {PALETTE.map((c) => {
                             const active = color === c && tool !== "eraser";
                             return (
                                 <button
                                     key={c}
                                     onClick={() => { setColor(c); if (tool === "eraser") setTool("pencil"); }}
+                                    aria-label={`pigment ${c}`}
                                     className="cursor-pointer"
-                                    style={{ borderRadius: 5, background: c, boxShadow: active ? "0 0 0 2.5px var(--ink), 0 0 0 4.5px var(--card)" : "inset 0 0 0 1px rgba(58,47,38,.25)" }}
+                                    style={{
+                                        borderRadius: "50%",
+                                        background: c,
+                                        boxShadow: active
+                                            ? "0 0 0 2px var(--parchment), 0 0 0 4px var(--gold)"
+                                            : "0 0 0 2px rgba(242,227,191,.35)",
+                                    }}
                                 />
                             );
                         })}
                     </div>
 
-                    <span style={{ width: 2, height: 34, background: "color-mix(in srgb, var(--ink) 15%, transparent)", borderRadius: 2 }} />
-
-                    {/* tools — brush, line, rect, ellipse, fill, eraser */}
-                    <div className="flex items-center gap-1.5">
+                    {/* implements */}
+                    <div className="flex items-center flex-wrap" style={{ gap: 7, paddingRight: 10, borderRight: "2px dashed rgba(242,227,191,.25)" }}>
                         {TOOLS.map((tl) => {
                             const active = tool === tl.id;
                             return (
@@ -420,12 +438,13 @@ export default function DrawingBoard({ isDrawer, socket }: Props) {
                                     key={tl.id}
                                     onClick={() => setTool(tl.id)}
                                     title={tl.title}
-                                    className="grid place-items-center cursor-pointer text-ink"
+                                    className="grid place-items-center cursor-pointer w-11 h-11 lg:w-[34px] lg:h-[34px]"
                                     style={{
-                                        width: 34, height: 34, borderRadius: 11, fontSize: 15,
-                                        border: `2.5px solid ${active ? "var(--outline)" : "color-mix(in srgb, var(--ink) 30%, transparent)"}`,
-                                        background: active ? "var(--amber)" : "var(--paper)",
-                                        boxShadow: active ? "2.5px 2.5px 0 var(--outline)" : "none",
+                                        borderRadius: 10,
+                                        fontSize: 15,
+                                        border: active ? "2px solid var(--parchment)" : "2px solid transparent",
+                                        background: active ? "var(--gold)" : "rgba(242,227,191,.12)",
+                                        color: active ? "var(--ink-warm)" : "var(--parchment)",
                                     }}
                                 >
                                     {tl.glyph}
@@ -434,34 +453,54 @@ export default function DrawingBoard({ isDrawer, socket }: Props) {
                         })}
                     </div>
 
-                    <span style={{ width: 2, height: 34, background: "color-mix(in srgb, var(--ink) 15%, transparent)", borderRadius: 2 }} />
-
-                    {/* brush sizes */}
-                    <div className="flex items-center gap-1.5">
-                        {SIZES.map((sz) => (
-                            <button key={sz} onClick={() => setWidth(sz)} className="grid place-items-center cursor-pointer" style={{ width: 30, height: 30 }}>
-                                <span style={{ width: sz, height: sz, borderRadius: "50%", background: "var(--ink)", boxShadow: width === sz ? "0 0 0 2px var(--card), 0 0 0 4px var(--ink)" : undefined }} />
+                    {/* nib */}
+                    <div className="flex items-center" style={{ gap: 7 }}>
+                        {SIZES.map((sz, si) => (
+                            <button
+                                key={sz}
+                                onClick={() => setWidth(sz)}
+                                aria-label={`nib ${sz}`}
+                                className="grid place-items-center cursor-pointer"
+                                style={{ width: 30, height: 30 }}
+                            >
+                                <span
+                                    style={{
+                                        width: NIB_DOT[si] ?? 15,
+                                        height: NIB_DOT[si] ?? 15,
+                                        borderRadius: "50%",
+                                        background: "var(--parchment)",
+                                        boxShadow: width === sz ? "0 0 0 2px var(--gold)" : undefined,
+                                    }}
+                                />
                             </button>
                         ))}
                     </div>
 
-                    {/* undo + clear */}
+                    {/* undo + banish, pushed right */}
                     <div className="flex items-center gap-2 ml-auto">
                         <button
                             onClick={undo}
                             disabled={!canUndo}
-                            title="Undo (Ctrl+Z)"
-                            className="font-bold cursor-pointer text-ink disabled:opacity-40 disabled:cursor-default"
-                            style={{ border: "2.5px solid var(--outline)", borderRadius: 11, background: "var(--card)", padding: "7px 11px", fontSize: 12, boxShadow: canUndo ? "2.5px 2.5px 0 var(--outline)" : "none" }}
+                            title="undo (Ctrl+Z)"
+                            className="cursor-pointer disabled:opacity-35 disabled:cursor-default"
+                            style={{
+                                border: "2px solid var(--parchment)", borderRadius: 11, background: "transparent",
+                                color: "var(--parchment)", padding: "7px 14px", minHeight: 36,
+                                fontFamily: "var(--font-loud)", fontWeight: 800, fontSize: 12,
+                            }}
                         >
-                            ↶ Undo
+                            undo ↺
                         </button>
                         <button
-                            onClick={handleClear}
-                            className="font-bold cursor-pointer text-card bg-rose"
-                            style={{ border: "2.5px solid var(--outline)", borderRadius: 11, boxShadow: "2.5px 2.5px 0 var(--outline)", padding: "8px 12px", fontSize: 11.5 }}
+                            onClick={() => { if (confirmClear) { setConfirmClear(false); handleClear(); } else { setConfirmClear(true); setTimeout(() => setConfirmClear(false), 3000); } }}
+                            className="cursor-pointer"
+                            style={{
+                                border: "2px solid var(--magenta)", borderRadius: 11, background: "var(--magenta)",
+                                color: "#fff6e2", padding: "7px 14px", minHeight: 36,
+                                fontFamily: "var(--font-loud)", fontWeight: 800, fontSize: 12,
+                            }}
                         >
-                            Clear all
+                            {confirmClear ? "banish it all?" : "banish all"}
                         </button>
                     </div>
                 </div>

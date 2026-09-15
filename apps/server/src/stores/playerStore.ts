@@ -58,3 +58,23 @@ export async function findPlayerForUser(userId: string): Promise<PlayerRow | nul
   );
   return r.rows[0] ? toPlayer(r.rows[0]) : null;
 }
+
+/**
+ * Delete guests who never played.
+ *
+ * A guest row is created the moment somebody joins a circle, and most of them
+ * never come back. This removes the ones that are provably worthless: no
+ * account, no match ever recorded, and old enough that they cannot be mid-rite.
+ * Accounts and anyone with history are never touched, and sessions go with them
+ * through ON DELETE CASCADE.
+ */
+export async function pruneIdleGuests(olderThanDays = 30): Promise<number> {
+  const r = await pool.query(
+    `DELETE FROM players p
+      WHERE p.user_id IS NULL
+        AND p.created_at < now() - ($1 || ' days')::interval
+        AND NOT EXISTS (SELECT 1 FROM match_participants mp WHERE mp.player_id = p.id)`,
+    [String(olderThanDays)],
+  );
+  return r.rowCount ?? 0;
+}

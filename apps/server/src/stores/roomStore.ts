@@ -26,6 +26,7 @@ export class RoomStore {
     if (existingPlayerIndex !== -1) {
       console.log(`Player ${newPlayer.name} reconnected! Updating socket...`);
       room.players[existingPlayerIndex].socketId = newPlayer.socketId;
+      room.players[existingPlayerIndex].avatar = newPlayer.avatar;   // a reroll follows them back in
     } else {
       room.players.push(newPlayer);
     }
@@ -72,6 +73,24 @@ export class RoomStore {
     } while (cursor !== "0");
     return total;
   }
+  /** Every room currently in Redis. Used to re-arm timers after a restart. */
+  async listRooms(): Promise<RoomState[]> {
+    let cursor = "0";
+    const rooms: RoomState[] = [];
+    do {
+      const [next, keys] = await this.redis.scan(cursor, "MATCH", "room:*", "COUNT", 200);
+      cursor = next;
+      if (keys.length) {
+        const vals = await this.redis.mget(keys);
+        for (const v of vals) {
+          if (!v) continue;
+          try { rooms.push(JSON.parse(v) as RoomState); } catch { /* skip bad json */ }
+        }
+      }
+    } while (cursor !== "0");
+    return rooms;
+  }
+
   async getHost(roomId: string): Promise<Player | null> {
     const room = await this.getRoom(roomId);
     if(!room) return null;

@@ -1,66 +1,100 @@
 import { RoomState, Player } from "../../../../../packages/shared";
 import Avatar from "../Avatar";
+import { Eyebrow, Btn, Btn2, Card } from "../ui/Bits";
+import { ordinal } from "../../lib/numbers";
 
 type Props = {
     room: RoomState;
     isHost: boolean;
     onPlayAgain: () => void;
     onLeave: () => void;
+    onOpenHistory?: () => void;
 };
 
-const hardShadow = (x: number, y: number, color = "var(--outline)") => ({ boxShadow: `${x}px ${y}px 0 ${color}` });
 const fmt = (n: number) => (n ?? 0).toLocaleString();
 
-// per-place look: [avatar size, plinth width/height, rank font, tilt, plinth shadow colour]
-const SPOTS: Record<number, { avatar: number; plinth: number; rank: number; tilt: number; shadow: string; width: number; nameSize: number; scoreSize: number }> = {
-    1: { avatar: 96, plinth: 152, rank: 44, tilt: 3, shadow: "var(--orange)", width: 158, nameSize: 14, scoreSize: 12 },
-    2: { avatar: 76, plinth: 104, rank: 30, tilt: -4, shadow: "var(--outline)", width: 132, nameSize: 12, scoreSize: 11 },
-    3: { avatar: 76, plinth: 80, rank: 26, tilt: 5, shadow: "var(--outline)", width: 132, nameSize: 12, scoreSize: 11 },
+// per-place plinth: [height, width, numeral size, fill, avatar size]
+const PLINTH: Record<number, { h: number; w: number; numeral: number; fill: string; avatar: number; grain: boolean }> = {
+    1: { h: 190, w: 240, numeral: 50, fill: "var(--parchment)", avatar: 112, grain: true },
+    2: { h: 154, w: 210, numeral: 38, fill: "var(--parchment-mid)", avatar: 92, grain: false },
+    3: { h: 126, w: 210, numeral: 32, fill: "var(--parchment-dim)", avatar: 92, grain: false },
 };
 
+
 function PodiumSpot({ player, place }: { player: Player; place: number }) {
-    const s = SPOTS[place];
+    const s = PLINTH[place];
+    const first = place === 1;
     return (
-        <div className="flex flex-col items-center gap-2.5">
-            <div className="relative">
-                {place === 1 && (
-                    <span
-                        className="absolute"
-                        style={{ top: -24, left: "50%", transform: "translateX(-50%) rotate(-6deg)", border: "2.5px solid var(--outline)", borderRadius: 9, background: "var(--amber)", color: "var(--ink)", ...hardShadow(3, 3), padding: "3px 10px", fontSize: 11, fontWeight: 700, letterSpacing: ".08em", whiteSpace: "nowrap" }}
-                    >
-                        WINNER
-                    </span>
+        <div className="flex flex-col items-center" style={{ paddingTop: first ? 38 : 0 }}>
+            <div className="relative flex flex-col items-center" style={{ marginBottom: 12 }}>
+                {first && (
+                    <span className="absolute" style={{ top: -34, fontSize: 26, transform: "rotate(-8deg)" }}>👑</span>
                 )}
-                <Avatar name={player.name} size={s.avatar} ring rotate={s.tilt} />
+                <Avatar name={player.name} avatar={player.avatar} size={s.avatar} ring faintRing={!first} />
             </div>
             <div
-                className="bg-card flex flex-col items-center justify-center gap-0.5 text-center px-2"
-                style={{ width: s.width, height: s.plinth, border: "3px solid var(--outline)", borderRadius: "8px 8px 4px 4px", ...hardShadow(place === 1 ? 6 : 5, place === 1 ? 7 : 6, s.shadow) }}
+                className={`flex flex-col items-center justify-center text-center px-3 ${s.grain ? "grain" : ""}`}
+                style={{
+                    width: s.w, height: s.h, maxWidth: "100%",
+                    background: s.fill,
+                    border: "3px solid var(--ink)",
+                    borderRadius: `${first ? 14 : 12}px ${first ? 14 : 12}px 0 0`,
+                }}
             >
-                <span className="font-loud text-ink" style={{ fontWeight: 800, fontSize: s.rank, lineHeight: 1 }}>{place}</span>
-                <span className="font-bold text-ink truncate max-w-full" style={{ fontSize: s.nameSize }}>{player.name}</span>
-                <span className="font-semibold text-ink/50" style={{ fontSize: s.scoreSize }}>{fmt(player.score ?? 0)}</span>
+                <span className="display" style={{ fontSize: s.numeral, color: "var(--ink-warm)" }}>{ordinal(place)}</span>
+                <span className="truncate max-w-full" dir="auto" style={{ fontFamily: "var(--font-loud)", fontWeight: 800, fontSize: first ? 17 : 15, color: "var(--ink-warm)" }}>
+                    {player.name}
+                </span>
+                <span className="display" style={{ fontSize: first ? 26 : place === 2 ? 22 : 20, color: first ? "var(--magenta-ink)" : "rgba(58,47,38,.6)" }}>
+                    {fmt(player.score ?? 0)} ✦
+                </span>
             </div>
         </div>
     );
 }
 
-// Petty-award label sticker + winner text
-function AwardRow({ label, bg, onColor, text }: { label: string; bg: string; onColor?: boolean; text: string }) {
+/** The stacked standing used on phones, and for 4th place and below anywhere. */
+function StandingRow({ player, place }: { player: Player; place: number }) {
+    const top = place === 1;
+    const dim = place >= 4;
     return (
-        <div className="flex items-center gap-2.5" style={{ fontSize: 12.5, fontWeight: 600, lineHeight: 1.3 }}>
-            <span
-                className={onColor ? "text-card" : "text-ink"}
-                style={{ border: "2px solid var(--outline)", borderRadius: 8, background: bg, padding: "3px 8px", fontSize: 10.5, fontWeight: 700, whiteSpace: "nowrap" }}
-            >
-                {label}
+        <div
+            className={`relative flex items-center gap-3 ${dim ? "faint" : "grain"}`}
+            style={{
+                padding: "11px 14px",
+                borderRadius: 14,
+                ...(dim
+                    ? {}
+                    : {
+                        background: place === 1 ? "var(--parchment)" : place === 2 ? "var(--parchment-mid)" : "var(--parchment-dim)",
+                        border: "3px solid var(--ink)",
+                        boxShadow: top ? "5px 5px 0 var(--gold)" : "4px 4px 0 rgba(0,0,0,.42)",
+                    }),
+                opacity: dim ? 0.85 : 1,
+            }}
+        >
+            {top && <span className="absolute" style={{ top: -14, right: 14, fontSize: 22, transform: "rotate(9deg)" }}>👑</span>}
+            <span className="display flex-none text-center" style={{ width: 34, fontSize: 20, color: dim ? "rgba(242,227,191,.5)" : "var(--ink-warm)" }}>
+                {ordinal(place)}
             </span>
-            <span className="text-ink" dir="auto">{text}</span>
+            <Avatar name={player.name} avatar={player.avatar} size={34} surface={dim ? "night" : "parchment"} dim={dim} />
+            <span className="min-w-0 flex-1">
+                <span className="block truncate" dir="auto" style={{ fontFamily: "var(--font-loud)", fontWeight: 800, fontSize: 14, color: dim ? "var(--parchment)" : "var(--ink-warm)" }}>
+                    {player.name}
+                </span>
+                {dim && (
+                    <span className="block" style={{ fontWeight: 600, fontSize: 10.5, color: "rgba(242,227,191,.4)" }}>
+                        left without saying goodbye
+                    </span>
+                )}
+            </span>
+            <span className="display flex-none" style={{ fontSize: 18, color: dim ? "rgba(242,227,191,.5)" : "var(--magenta-ink)" }}>
+                {fmt(player.score ?? 0)} ✦
+            </span>
         </div>
     );
 }
 
-// smallest / largest entry of a Record<string, number>; returns null when empty
 function pick(rec: Record<string, number> | undefined, mode: "min" | "max"): { id: string; value: number } | null {
     if (!rec) return null;
     let best: { id: string; value: number } | null = null;
@@ -70,105 +104,96 @@ function pick(rec: Record<string, number> | undefined, mode: "min" | "max"): { i
     return best;
 }
 
-export default function GameOver({ room, isHost, onPlayAgain, onLeave }: Props) {
+/** 07 · End of the rite. */
+export default function GameOver({ room, isHost, onPlayAgain, onLeave, onOpenHistory }: Props) {
     const ranked = [...room.players].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
-    // visual podium order: 2nd, 1st, 3rd (1st tallest in the middle)
+    const winner = ranked[0];
+    // the design's podium reads 3rd · 1st · 2nd, left to right
     const podium = [
-        { p: ranked[1], place: 2 },
-        { p: ranked[0], place: 1 },
         { p: ranked[2], place: 3 },
+        { p: ranked[0], place: 1 },
+        { p: ranked[1], place: 2 },
     ].filter((s) => s.p);
     const rest = ranked.slice(3);
 
-    // petty awards computed from server stats (may be undefined on a never-played room)
     const stats = room.stats;
     const nameOf = (id: string) => room.players.find((p) => p.id === id)?.name;
     const fastest = pick(stats?.guessMs, "min");
     const bestDoodle = pick(stats?.doodle, "max");
     const mostWrong = pick(stats?.wrong, "max");
-    const fastestName = fastest && nameOf(fastest.id);
-    const doodleName = bestDoodle && nameOf(bestDoodle.id);
-    const wrongName = mostWrong && nameOf(mostWrong.id);
-    const hasAwards = Boolean(fastestName || doodleName || wrongName);
+    const awards: [string, string][] = [];
+    if (fastest && nameOf(fastest.id)) awards.push(["fastest divination", `${nameOf(fastest.id)} · ${(fastest.value / 1000).toFixed(1)}s`]);
+    if (bestDoodle && nameOf(bestDoodle.id)) awards.push(["finest scrawl", nameOf(bestDoodle.id)!]);
+    if (mostWrong && nameOf(mostWrong.id)) awards.push(["most wrong", `${nameOf(mostWrong.id)} · ${mostWrong.value}`]);
 
-    // "N terrible guesses" — total wrong guesses this game
-    const terrible = stats ? Object.values(stats.wrong).reduce((a, b) => a + b, 0) : 0;
-    const rounds = room.settings.rounds;
-    const subhead = terrible > 0
-        ? `${rounds} ${rounds === 1 ? "round" : "rounds"}, ${terrible} terrible guess${terrible === 1 ? "" : "es"}, one winner`
-        : `${rounds} ${rounds === 1 ? "round" : "rounds"}, ${room.players.length} players, one winner`;
+    const straggler = ranked[3];
 
     return (
-        <div className="relative overflow-hidden py-6 px-4">
-            {/* confetti — fixed positions/rotations, no randomness */}
-            <span className="absolute" style={{ top: 34, left: 60, width: 14, height: 14, borderRadius: 4, background: "var(--orange)", transform: "rotate(24deg)" }} />
-            <span className="absolute" style={{ top: 96, left: 170, width: 10, height: 10, borderRadius: "50%", background: "var(--cyan)" }} />
-            <span className="absolute" style={{ top: 54, right: 70, width: 12, height: 12, borderRadius: 3, background: "var(--lime)", transform: "rotate(-16deg)" }} />
-            <span className="absolute" style={{ bottom: 60, left: 120, width: 11, height: 11, borderRadius: "50%", background: "oklch(0.7 0.15 315)" }} />
-            <span className="absolute" style={{ bottom: 90, right: 110, width: 13, height: 13, borderRadius: 4, background: "var(--amber)", transform: "rotate(18deg)" }} />
+        <div className="flex flex-col items-center gap-7 py-4">
+            <div className="text-center">
+                <Eyebrow dim={0.42} size={11} style={{ letterSpacing: ".34em" }}>the candles are out</Eyebrow>
+                <h2 className="display m-0 mt-3" dir="auto" style={{ fontSize: "clamp(34px, 8vw, 56px)", color: "var(--parchment)" }}>
+                    {winner ? `${winner.name} ascends` : "nobody ascends"}
+                </h2>
+                <p className="m-0 mt-2" style={{ fontFamily: "var(--font-loud)", fontStyle: "italic", fontWeight: 700, fontSize: 16, color: "var(--gold-bright)" }}>
+                    and is insufferable about it
+                </p>
+            </div>
 
-            <div className="relative flex flex-col lg:flex-row lg:items-center gap-8 lg:gap-9 max-w-4xl mx-auto">
-                {/* LEFT: headline + podium + actions */}
-                <div className="flex-1 flex flex-col items-center gap-6 min-w-0">
-                    <div className="relative text-center">
-                        <span className="tape absolute" style={{ top: -12, left: -34, width: 80, height: 28, transform: "rotate(-18deg)" }} />
-                        <h2 className="font-loud m-0" style={{ fontWeight: 800, fontSize: "clamp(32px, 8vw, 46px)", lineHeight: 1.05 }}>That&apos;s a brawl!</h2>
-                        <p className="font-loud italic text-ink/55 mt-1.5" style={{ fontWeight: 700, fontSize: 17 }}>{subhead}</p>
-                    </div>
+            {/* desktop: the podium · phones: stacked standings */}
+            <div className="hidden sm:flex items-end justify-center gap-[22px] flex-wrap">
+                {podium.map(({ p, place }) => <PodiumSpot key={p!.id} player={p!} place={place} />)}
+            </div>
+            <div className="sm:hidden w-full flex flex-col gap-3">
+                {ranked.slice(0, 3).map((p, i) => <StandingRow key={p.id} player={p} place={i + 1} />)}
+            </div>
 
-                    {/* podium */}
-                    <div className="w-full flex items-end justify-center gap-3 sm:gap-4 overflow-x-auto pb-2" style={{ minHeight: 220 }}>
-                        {podium.map(({ p, place }) => (
-                            <PodiumSpot key={p!.id} player={p!} place={place} />
-                        ))}
-                    </div>
-
-                    {/* actions */}
-                    <div className="flex gap-3 flex-wrap justify-center">
-                        {isHost && (
-                            <button onClick={onPlayAgain} className="font-loud text-card cursor-pointer bg-orange" style={{ border: "3px solid var(--outline)", borderRadius: "32px 28px 32px 28px", ...hardShadow(5, 6), padding: "14px 30px", fontWeight: 800, fontSize: 22 }}>
-                                Rematch!
-                            </button>
-                        )}
-                        <button onClick={onLeave} className="font-loud text-ink cursor-pointer bg-card" style={{ border: "3px solid var(--outline)", borderRadius: "28px 32px 28px 32px", ...hardShadow(5, 6), padding: "14px 24px", fontWeight: 700, fontSize: 17 }}>
-                            Back to lobby
-                        </button>
-                    </div>
+            {/* the footer line already names a lone straggler — only list a crowd */}
+            {rest.length > 1 && (
+                <div className="w-full max-w-[520px] flex flex-col gap-2.5">
+                    {rest.map((p, i) => <StandingRow key={p.id} player={p} place={i + 4} />)}
                 </div>
+            )}
 
-                {/* RIGHT: everyone else + petty awards */}
-                {(rest.length > 0 || hasAwards) && (
-                    <div className="w-full lg:w-[344px] flex-none flex flex-col gap-4">
-                        {rest.length > 0 && (
-                            <div className="bg-card" style={{ transform: "rotate(-1deg)", borderRadius: "8px 20px 10px 18px", boxShadow: "0 12px 26px rgba(58,47,38,.16)", padding: 20 }}>
-                                <div className="font-mono uppercase text-ink/45 mb-3" style={{ fontWeight: 700, fontSize: 10.5, letterSpacing: ".12em" }}>Everyone else</div>
-                                <div className="flex flex-col gap-2.5">
-                                    {rest.map((p, i) => (
-                                        <div key={p.id} className="flex items-center gap-2.5">
-                                            <span className="font-loud text-ink/50" style={{ fontWeight: 800, fontSize: 15, width: 18 }}>{i + 4}</span>
-                                            <Avatar name={p.name} size={28} />
-                                            <span className="flex-1 font-bold truncate" style={{ fontSize: 13 }}>{p.name}</span>
-                                            <span className="font-semibold text-ink/55" style={{ fontSize: 12 }}>{fmt(p.score ?? 0)}</span>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
-
-                        {hasAwards && (
-                            <div className="bg-card relative" style={{ transform: "rotate(1.4deg)", borderRadius: "18px 8px 20px 10px", boxShadow: "0 12px 26px rgba(58,47,38,.16)", padding: 20 }}>
-                                <span className="tape absolute" style={{ top: -13, left: 24, width: 84, height: 26, transform: "rotate(-5deg)" }} />
-                                <div className="font-mono uppercase text-ink/45 mb-3" style={{ marginTop: 8, fontWeight: 700, fontSize: 10.5, letterSpacing: ".12em" }}>Petty awards</div>
-                                <div className="flex flex-col gap-2.5">
-                                    {fastestName && <AwardRow label="FASTEST" bg="var(--lime)" text={`${fastestName}, ${(fastest!.value / 1000).toFixed(1)}s`} />}
-                                    {doodleName && <AwardRow label="BEST DOODLE" bg="var(--cyan)" onColor text={doodleName} />}
-                                    {wrongName && <AwardRow label="MOST WRONG" bg="var(--rose)" onColor text={`${wrongName}, ${mostWrong!.value} guess${mostWrong!.value === 1 ? "" : "es"}`} />}
-                                </div>
-                            </div>
-                        )}
-                    </div>
+            {/* actions */}
+            <div className="flex gap-3.5 flex-wrap justify-center items-center">
+                {isHost && (
+                    <Btn tone="gold" size={25} radius="32px 28px 32px 26px" style={{ padding: "15px 34px" }} onClick={onPlayAgain}>CAST AGAIN</Btn>
+                )}
+                <Btn2 night size={16} radius="28px 32px 26px 32px" style={{ minHeight: 56, padding: "15px 28px", fontWeight: 800 }} onClick={onLeave}>
+                    back to the guild
+                </Btn2>
+                {onOpenHistory && (
+                    <button
+                        onClick={onOpenHistory}
+                        className="cursor-pointer"
+                        style={{
+                            border: "2.5px dashed rgba(242,227,191,.35)", borderRadius: 28, background: "transparent",
+                            color: "rgba(242,227,191,.6)", minHeight: 56, padding: "15px 24px",
+                            fontFamily: "var(--font-loud)", fontWeight: 800, fontSize: 15,
+                        }}
+                    >
+                        📜 add to chronicle
+                    </button>
                 )}
             </div>
+
+            {awards.length > 0 && (
+                <div className="flex gap-2.5 flex-wrap justify-center">
+                    {awards.map(([label, who]) => (
+                        <Card key={label} className="px-3.5 py-2.5" tilt={label.length % 2 ? -1.4 : 1.2} radius="11px 9px 12px 8px" shadow="3px 3px 0 rgba(0,0,0,.42)">
+                            <span className="eyebrow block" style={{ fontSize: 8.5, color: "var(--magenta-ink)" }}>{label}</span>
+                            <span className="block mt-1" dir="auto" style={{ fontFamily: "var(--font-loud)", fontWeight: 800, fontSize: 12.5, color: "var(--ink-warm)" }}>{who}</span>
+                        </Card>
+                    ))}
+                </div>
+            )}
+
+            {straggler && (
+                <p className="m-0 text-center" style={{ fontWeight: 600, fontSize: 12.5, color: "rgba(242,227,191,.4)" }}>
+                    {straggler.name} came fourth and has left without saying goodbye
+                </p>
+            )}
         </div>
     );
 }

@@ -27,18 +27,40 @@ async function startSession(reply: FastifyReply, playerId: string) {
 }
 
 export async function authRoutes(app: FastifyInstance) {
-    app.get("/api/me", async (req, reply) => {
+    /**
+     * Who am I? Answers `playerId: null` for a visitor the server has never met.
+     *
+     * This deliberately does NOT mint anyone. Looking at the front page is not
+     * joining the guild: a row here used to be created for every cookie-less
+     * hit, which made filling the database as cheap as a loop of GETs.
+     */
+    app.get("/api/me", async (req) => {
         const raw = req.cookies.sid;
         const playerId = raw ? await verifySession(raw) : null;
         const player = playerId ? await getPlayer(playerId) : null;
-        if (player) {
-            const user = player.userId ? await findUserById(player.userId) : null;
-            return { playerId: player.id, displayName: player.displayName, user };
+        if (!player) return { playerId: null, displayName: null, user: null };
+        const user = player.userId ? await findUserById(player.userId) : null;
+        return { playerId: player.id, displayName: player.displayName, user };
+    });
+
+    /**
+     * Become someone. Called when a visitor first does something that needs an
+     * identity — summoning a circle or walking into one — not on page load.
+     * Returning a session that already exists rather than stacking another.
+     */
+    app.post("/api/me", {
+        config: { rateLimit: { max: 60, timeWindow: "1 minute" } },
+    }, async (req, reply) => {
+        const raw = req.cookies.sid;
+        const existingId = raw ? await verifySession(raw) : null;
+        const existing = existingId ? await getPlayer(existingId) : null;
+        if (existing) {
+            const user = existing.userId ? await findUserById(existing.userId) : null;
+            return { playerId: existing.id, displayName: existing.displayName, user };
         }
         const fresh = await createGuest("Guest");
         await startSession(reply, fresh.id);
-
-        return { playerId: fresh.id, displayName: fresh.displayName, user: null };
+        return reply.status(201).send({ playerId: fresh.id, displayName: fresh.displayName, user: null });
     });
 
 

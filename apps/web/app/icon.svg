@@ -1,8 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
-  <!-- hard offset shadow (ink) -->
-  <rect x="9" y="10" width="47" height="47" rx="14" fill="#3a2f26"/>
-  <!-- sticker card -->
-  <rect x="5" y="5" width="47" height="47" rx="14" fill="#fffdf7" stroke="#3a2f26" stroke-width="4"/>
-  <!-- orange doodle squiggle -->
-  <path d="M16 31 q6 -11 12 -1 t12 -3" fill="none" stroke="#e0793e" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- the app icon is the logo tile alone -->
+  <rect x="8" y="9" width="48" height="48" rx="14" fill="#0d0718"/>
+  <rect x="4" y="5" width="48" height="48" rx="14" fill="#d6357f" stroke="#0d0718" stroke-width="3"/>
+  <!-- the wand, at ~58% of the tile -->
+  <g transform="translate(14 15) scale(0.28)">
+    <path d="M20 82 L64 38" stroke="#f2e3bf" stroke-width="13" stroke-linecap="round" fill="none"/>
+    <path d="M56 46 L74 28" stroke="#fffaeb" stroke-width="13" stroke-linecap="round" fill="none"/>
+    <path d="M82 6 L86.5 19.5 L100 24 L86.5 28.5 L82 42 L77.5 28.5 L64 24 L77.5 19.5 Z" fill="#fffaeb"/>
+    <circle cx="14" cy="30" r="4" fill="#fffaeb"/>
+  </g>
 </svg>

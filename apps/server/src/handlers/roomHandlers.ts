@@ -1,7 +1,7 @@
 import { Server, Socket } from "socket.io";
 import { RoomStore } from "../stores/roomStore.js";
-import { DrawSegment, DrawOp, DrawEntry, ChatMessage, ChatEntry, MAX_CHAT_LEN, MAX_NAME_LEN, PayoutEntry,cleanName } from "../../../../packages/shared/index.js";
-import { RoomState, Player, RoomSettings, GameState, CHOOSE_TIME_MS, SCORING_DELAY_MS } from "../../../../packages/shared/index.js";
+import { DrawSegment, DrawOp, DrawEntry, ChatMessage, ChatEntry, MAX_CHAT_LEN, MAX_NAME_LEN, PayoutEntry,cleanName, cleanAvatar } from "../../../../packages/shared/index.js";
+import { RoomState, Player, RoomSettings, GameState, RoomResponse, CHOOSE_TIME_MS, SCORING_DELAY_MS } from "../../../../packages/shared/index.js";
 import { createNewRoom, createNewPlayer } from "./../services/roomServices.js";
 import {
     chooseWord, createInitialGame, pickWords, publicRoom,
@@ -239,6 +239,53 @@ function broadcastRoom(io: Server, room: RoomState) {
     }
 }
 
+/**
+ * Socket acknowledgements are optional on the wire: a client can emit
+ * "leave_room" with no callback at all. Calling an absent one threw inside the
+ * handler's try, and the catch then threw again calling it a second time —
+ * which took the whole server down with it. Everything acks through here now.
+ */
+type Ack<T> = ((res: T) => void) | undefined;
+const ack = <T>(cb: Ack<T>) => (res: T) => { if (typeof cb === "function") cb(res); };
+
+
+/**
+ * Re-arm the clocks for rooms mid-rite.
+ *
+ * Every deadline is an in-process `setTimeout`, so a restart — a deploy, a
+ * crash — used to leave rooms frozen for ever: the candle read zero and nothing
+ * advanced, with no way out but leaving. Redis still holds the room and its
+ * `endsAt`, so on boot (and on a slow sweep afterwards, for timers lost any
+ * other way) we schedule whatever that phase was waiting for. A deadline that
+ * has already passed fires immediately.
+ */
+export async function resumeRoundTimers(io: Server, roomStore: RoomStore, log?: { info: (o: object, m: string) => void }) {
+    const rooms = await roomStore.listRooms();
+    let resumed = 0;
+
+    for (const room of rooms) {
+        const game = room.game;
+        if (room.status !== "playing" || !game?.endsAt) continue;
+        if (roundTimers.has(room.roomId)) continue;        // this one is still ticking
+
+        const due = Math.max(0, game.endsAt - Date.now());
+        const roomId = room.roomId;
+        if (game.phase === "choosing") {
+            roundTimers.set(roomId, setTimeout(() => autoPickWord(io, roomStore, roomId), due));
+        } else if (game.phase === "drawing") {
+            roundTimers.set(roomId, setTimeout(() => finishRound(io, roomStore, roomId), due));
+        } else if (game.phase === "scoring") {
+            roundTimers.set(roomId, setTimeout(() => advanceRound(io, roomStore, roomId), due));
+        } else {
+            continue;
+        }
+        resumed += 1;
+    }
+
+    if (resumed) log?.info({ resumed }, "re-armed round timers");
+    return resumed;
+}
+
 export function registerRoomHandlers(io: Server, socket: Socket, roomStore: RoomStore) {
     // tell the client which word lists exist per language (drives the lobby picker)
     socket.emit("word_meta", WORD_LISTS);
@@ -246,7 +293,14 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
     roomStore.countPlayers().then((n) => socket.emit("player_count", n)).catch(() => { });
 
     socket.on("create_room", async (data, callback) => {
-        const name = cleanName(data.name);
+        const reply = ack<RoomResponse>(callback);
+        if (!socket.data.playerId) {
+            // a visitor who has not asked to be anyone yet; the client mints an
+            // identity and reconnects, then tries again
+            reply({ success: false, error: "no_identity" });
+            return;
+        }
+        const name = cleanName(data?.name);
         renamePlayer(socket.data.playerId, name).catch((err) =>
             console.error("renamePlayer failed", err));
         const hostPlayer: Player = createNewPlayer({
@@ -254,6 +308,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
             socketId: socket.id,
             name,
             isHost: true,
+            avatar: cleanAvatar(data.avatar),
         });
 
         const newRoom: RoomState = createNewRoom(hostPlayer);
@@ -267,19 +322,27 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
             broadcastPlayerCount(io, roomStore);
             console.log(`Room ${newRoom.roomId} created by ${hostPlayer.name}`);
 
-            callback({ success: true, roomId: newRoom.roomId, room: newRoom });
+            reply({ success: true, roomId: newRoom.roomId, room: newRoom });
 
         } catch (error) {
             console.error("Failed to create room:", error);
-            callback({ success: false, error: true });
+            reply({ success: false, error: true });
         }
     })
 
 
     socket.on('join_room', async (data, callback) => {
-
-        const roomId = data.code;
-        const name = cleanName(data.name);
+        const reply = ack<RoomResponse>(callback);
+        if (!socket.data.playerId) {
+            reply({ success: false, error: "no_identity" });
+            return;
+        }
+        const roomId = data?.code;
+        const name = cleanName(data?.name);
+        if (typeof roomId !== "string" || !roomId) {
+            reply({ success: false, error: "Room not found. Check the code and try again." });
+            return;
+        }
         renamePlayer(socket.data.playerId, name).catch((err) =>
             console.error("renamePlayer failed", err));
         const newPlayer: Player = createNewPlayer({
@@ -287,6 +350,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
             socketId: socket.id,
             name,
             isHost: false,
+            avatar: cleanAvatar(data.avatar),
         })
         const timer = disconectTimers.get(socket.data.playerId);
         if (timer) { clearTimeout(timer); disconectTimers.delete(socket.data.playerId); }
@@ -297,7 +361,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
                 //rmove the timer here ?
                 const rejoining = existing.players.some((p) => p.id === newPlayer.id);
                 if (!rejoining && existing.players.length >= existing.settings.maxPlayers) {
-                    callback({ success: false, error: "Room is full." });
+                    reply({ success: false, error: "Room is full." });
                     return;
                 }
             }
@@ -310,11 +374,11 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
                 console.log(`user: ${newPlayer.name} joined id: ${newPlayer.id}`);
                 broadcastRoom(io, room);
                 broadcastPlayerCount(io, roomStore);
-                say(io, roomId, { author: "System", text: `${newPlayer.name} joined the room`, kind: "system", playerId: newPlayer.id }, room.game);
-                callback({ success: true, roomId: roomId, room });
+                say(io, roomId, { author: "System", text: `${newPlayer.name} has entered the circle`, kind: "system", playerId: newPlayer.id }, room.game);
+                reply({ success: true, roomId: roomId, room });
             }
             else {
-                callback({
+                reply({
                     success: false,
                     error: "Room not found. Check the code and try again."
                 });
@@ -322,7 +386,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
         }
         catch (error) {
             console.error(`Failed to join room ${roomId}:`, error);
-            callback({
+            reply({
                 success: false,
                 error: "Server error while joining. Please try again."
             });
@@ -330,21 +394,24 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
     });
 
     socket.on("leave_room", async (data, callback) => {
+        const reply = ack<{ success: boolean; error?: string }>(callback);
+        const roomId = data?.roomId ?? socket.data.roomId;
+        if (!roomId) { reply({ success: true }); return; }
         try {
-            const { room, removed } = await roomStore.leavePlayer(data.roomId, socket.data.playerId);
-            socket.leave(data.roomId);
+            const { room, removed } = await roomStore.leavePlayer(roomId, socket.data.playerId);
+            socket.leave(roomId);
 
             if (room) {
                 broadcastRoom(io, room);
-                say(io, room.roomId, { author: "System", text: `${removed?.name ?? "A player"} left the room`, kind: "system", playerId: removed?.id }, room.game);
+                say(io, room.roomId, { author: "System", text: `${removed?.name ?? "A wizard"} has left the circle`, kind: "system", playerId: removed?.id }, room.game);
             } else {
-                forgetRoom(data.roomId);   // room emptied and was deleted
+                forgetRoom(roomId);   // room emptied and was deleted
             }
             broadcastPlayerCount(io, roomStore);
-            callback({ success: true });
+            reply({ success: true });
         } catch (error) {
-            console.error(`Failed to leave room ${data.roomId}:`, error);
-            callback({ success: false, error: "Server error while leaving." });
+            console.error(`Failed to leave room ${roomId}:`, error);
+            reply({ success: false, error: "Server error while leaving." });
         }
     });
     socket.on('disconnect', async () => {
@@ -357,7 +424,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
                 const { room, removed } = await roomStore.leavePlayer(roomId, playerId);
                 if (room) {
                     broadcastRoom(io, room);
-                    say(io, roomId, { author: "System", text: `${removed?.name ?? "A player"} left the room`, kind: "system", playerId: removed?.id }, room.game);
+                    say(io, roomId, { author: "System", text: `${removed?.name ?? "A wizard"} has left the circle`, kind: "system", playerId: removed?.id }, room.game);
                 } else {
                     forgetRoom(roomId);   // room emptied and was deleted
                 }
@@ -384,6 +451,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
             const host = room.players.find((p) => p.isHost);
             if (!host || host.id !== socket.data.playerId) return; // host only
             if (room.status !== "waiting") return;                 // don't restart mid-game
+            if (room.players.length < 2) return;                   // a rite of one is merely drawing
 
             // game logic (pure): first turn, host draws first
             const game = createInitialGame(host.id);
@@ -548,7 +616,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
                 // announce WITHOUT the word, then push the updated scores
                 // stays authored by System (the word must not leak), but carries the
                 // guesser's id so the guess is queryable without parsing prose
-                const note: ChatMessage = { author: "System", text: `${player.name} guessed the word!`, kind: "correct", playerId: player.id };
+                const note: ChatMessage = { author: "System", text: `${player.name} divined the spell!`, kind: "correct", playerId: player.id };
                 say(io, roomId, note, game);
                 broadcastRoom(io, room);
 
@@ -581,6 +649,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
         if (!host || host.id !== socket.data.playerId) return; // host only
         if (room.status !== "waiting") return;                 // settings lock once playing
 
+        const prev = room.settings;
         const s = (data ?? {}) as Partial<RoomSettings>;
         room.settings = {
             rounds: clamp(s.rounds, 1, 10, room.settings.rounds),
@@ -597,6 +666,17 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
         };
         await roomStore.saveRoom(room);
         broadcastRoom(io, room);
+
+        // the design's settings pill: one ⚙ line per changed rule
+        const changes: string[] = [];
+        if (room.settings.rounds !== prev.rounds) changes.push(`the rite to ${room.settings.rounds} rounds`);
+        if (room.settings.drawTimeMs !== prev.drawTimeMs) changes.push(`the candle to ${Math.round(room.settings.drawTimeMs / 1000)}s`);
+        if (room.settings.maxPlayers !== prev.maxPlayers) changes.push(`the circle to ${room.settings.maxPlayers} seats`);
+        if (room.settings.hints !== prev.hints) changes.push(room.settings.hints === 0 ? "the hints out" : `the hints to ${room.settings.hints}`);
+        if (room.settings.language !== prev.language) changes.push(`the grimoire to ${room.settings.language}`);
+        if (changes.length) {
+            say(io, roomId, { author: "System", text: `⚙ ${host.name} set ${changes.join(", ")}`, kind: "system", playerId: host.id }, room.game);
+        }
     });
 
     socket.on("play_again", async () => {

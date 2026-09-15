@@ -1,13 +1,17 @@
 "use client";
-import { useEffect, useState } from "react";
+import { Fragment } from "react";
 import { GamePhase } from "../../../../../packages/shared";
+import { CandleTimer } from "../ui/Candle";
+import { Wordmark } from "../ui/Logo";
+import { Ghost, InkEyebrow } from "../ui/Bits";
+
 
 type Props = {
     phase: GamePhase;
     isDrawer: boolean;
     word: string | null;
     wordLength: number | null;
-    hint: string[] | null;   // per-letter reveal for guessers ("" hidden, " " space, else letter)
+    hint: string[] | null;   // per-letter reveal for diviners ("" hidden, " " space, else letter)
     round: number;
     totalRounds: number;
     drawerName: string;
@@ -16,155 +20,101 @@ type Props = {
     onLeave: () => void;
 };
 
-const hardShadow = (x: number, y: number) => ({ boxShadow: `${x}px ${y}px 0 var(--outline)` });
+/**
+ * The masked word plaque and the candle.
+ * The word is rendered as one span per word with a rule between them — never a
+ * single string, or the gap between words disappears under the letter-spacing.
+ */
+function MaskedWord({ groups, size }: { groups: string[]; size: string | number }) {
+    return (
+        <div className="flex items-center justify-center gap-2 sm:gap-3 flex-wrap">
+            {groups.map((g, i) => (
+                <Fragment key={i}>
+                    {i > 0 && <span className="flex-none w-4 sm:w-[22px]" style={{ height: 3, background: "rgba(58,47,38,.3)", borderRadius: 2 }} />}
+                    <span className="display" style={{ fontSize: size, letterSpacing: ".24em", lineHeight: 1.15, color: "var(--ink-warm)", whiteSpace: "nowrap" }}>
+                        {g}
+                    </span>
+                </Fragment>
+            ))}
+        </div>
+    );
+}
+
+// "haunted kettle" → ["H A U N T E D", "K E T T L E"]; hidden letters read as _
+function groupsOf(word: string | null, hint: string[] | null, wordLength: number | null): string[] {
+    const cells = word
+        ? word.toUpperCase().split("")
+        : hint ?? Array.from({ length: wordLength ?? 0 }, () => "");
+    const out: string[] = [];
+    let cur: string[] = [];
+    for (const ch of cells) {
+        if (ch === " ") { out.push(cur.join(" ")); cur = []; }
+        else cur.push(ch === "" ? "_" : ch.toUpperCase());
+    }
+    if (cur.length) out.push(cur.join(" "));
+    return out.filter(Boolean);
+}
 
 export default function WordBar({ phase, isDrawer, word, wordLength, hint, round, totalRounds, drawerName, endsAt, totalMs, onLeave }: Props) {
-    const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
-
-    // Live countdown for whatever phase is timed (choosing / drawing / scoring).
-    // The server owns the deadline (endsAt); we just display it.
-    useEffect(() => {
-        if (endsAt == null) {
-            setSecondsLeft(null);
-            return;
-        }
-        const tick = () => setSecondsLeft(Math.max(0, Math.ceil((endsAt - Date.now()) / 1000)));
-        tick();
-        const id = setInterval(tick, 1000);
-        return () => clearInterval(id);
-    }, [endsAt]);
-
-    const frac = totalMs > 0 && secondsLeft != null ? Math.max(0, Math.min(1, (secondsLeft * 1000) / totalMs)) : 0;
-    const low = secondsLeft != null && secondsLeft <= Math.max(5, Math.round((totalMs / 1000) * 0.2));
-    const ringColor = low ? "var(--rose)" : "var(--orange)";
-
-    // Desktop middle — the full word / hint block centered in the header row.
-    function renderMiddle() {
-        if (phase === "choosing") {
-            return (
-                <span className="font-loud italic text-ink/55" style={{ fontWeight: 700, fontSize: 22 }}>
-                    {isDrawer ? "Pick a word to draw…" : `${drawerName} is choosing a word…`}
-                </span>
-            );
-        }
-        if (phase === "drawing") {
-            return (
-                <div>
-                    <div className="font-mono uppercase text-ink/45 mb-1" style={{ fontWeight: 700, fontSize: 10, letterSpacing: ".16em" }}>
-                        {isDrawer ? "You are drawing" : `${drawerName} is drawing`}
-                    </div>
-                    {isDrawer ? (
-                        <span className="font-loud" style={{ fontWeight: 800, fontSize: "clamp(20px, 6vw, 34px)", letterSpacing: ".06em" }}>
-                            <span dir="auto">{word?.toUpperCase()}</span>
-                            <span className="ml-3 font-bold text-ink/45" style={{ fontSize: 13 }}>{wordLength} letters</span>
-                        </span>
-                    ) : (
-                        <span className="inline-flex items-end gap-1.5 flex-wrap justify-center max-w-full" dir="auto">
-                            {(hint ?? Array.from({ length: wordLength ?? 0 }, () => "")).map((ch, i) => (
-                                ch === " "
-                                    ? <span key={i} style={{ width: "clamp(6px, 2vw, 12px)" }} />
-                                    : <span key={i} className="font-loud text-center text-ink" style={{ fontSize: "clamp(20px, 6vw, 34px)", lineHeight: 1, width: "clamp(15px, 5vw, 24px)", borderBottom: "4px solid color-mix(in srgb, var(--ink) 30%, transparent)" }}>{ch || " "}</span>
-                            ))}
-                            <span className="ml-2 font-bold text-ink/45" style={{ fontSize: 12 }}>{hint ? hint.filter((c) => c !== " ").length : wordLength} letters</span>
-                        </span>
-                    )}
-                </div>
-            );
-        }
-        if (phase === "scoring") {
-            return (
-                <span className="font-loud" style={{ fontWeight: 700, fontSize: 22 }}>
-                    <span className="text-ink/55">The word was </span>
-                    <span className="text-orange" dir="auto" style={{ fontWeight: 800 }}>{word}</span>
-                </span>
-            );
-        }
-        return null;
-    }
-
-    // Mobile compact label — the mono-caps line that sits centered in the header row.
-    function renderMobileLabel() {
-        const text =
-            phase === "choosing" ? (isDrawer ? "Pick a word" : `${drawerName} is choosing`) :
-                phase === "drawing" ? (isDrawer ? "You are drawing" : `${drawerName} is drawing`) :
-                    phase === "scoring" ? "The word was" : "";
-        return (
-            <div className="font-mono uppercase text-ink/45 truncate" style={{ fontWeight: 700, fontSize: 10, letterSpacing: ".14em" }}>
-                {text}
-            </div>
-        );
-    }
-
-    // Mobile word row — its own line under the header so the length/hint is always
-    // visible (drawing phase only). ~26px letters in 20px slots per frame #1i.
-    function renderMobileWord() {
-        if (isDrawer) {
-            return (
-                <div className="flex justify-center items-baseline gap-2 flex-wrap" dir="auto">
-                    <span className="font-loud text-ink" style={{ fontWeight: 800, fontSize: 26, letterSpacing: ".04em", lineHeight: 1 }}>{word}</span>
-                    <span className="font-bold text-ink/45" style={{ fontSize: 11 }}>{wordLength} letters</span>
-                </div>
-            );
-        }
-        const cells = hint ?? Array.from({ length: wordLength ?? 0 }, () => "");
-        return (
-            <div className="flex justify-center items-end gap-[5px] flex-wrap" dir="auto">
-                {cells.map((ch, i) => (
-                    ch === " "
-                        ? <span key={i} style={{ width: 8 }} />
-                        : <span key={i} className="font-loud text-center text-ink" style={{ fontSize: 26, lineHeight: 1, width: 20, borderBottom: ch ? "3.5px solid var(--outline)" : "3.5px solid color-mix(in srgb, var(--ink) 30%, transparent)" }}>{ch || " "}</span>
-                ))}
-                <span className="ml-1 font-bold text-ink/45" style={{ fontSize: 11 }}>{cells.filter((c) => c !== " ").length} letters</span>
-            </div>
-        );
-    }
-
-    // Timer ring at a given size (62px desktop, 44px mobile).
-    function ring(size: number, inner: number, font: number) {
-        if (endsAt == null || secondsLeft == null) return null;
-        return (
-            <span className="relative grid place-items-center flex-none" style={{ width: size, height: size, border: "3px solid var(--outline)", borderRadius: "50%", background: `conic-gradient(${ringColor} 0 ${frac * 100}%, var(--card) ${frac * 100}% 100%)`, ...hardShadow(3, 3) }}>
-                <span className="grid place-items-center font-loud" style={{ width: inner, height: inner, borderRadius: "50%", background: "var(--card)", fontWeight: 800, fontSize: font, color: low ? "var(--rose)" : "var(--ink)" }}>
-                    {secondsLeft ?? "–"}
-                </span>
-            </span>
-        );
-    }
-
-    const leaveBtn = (
-        <button onClick={onLeave} className="font-bold cursor-pointer bg-card text-rose flex-none" style={{ border: "2.5px solid var(--outline)", borderRadius: 12, ...hardShadow(3, 3), padding: "9px 13px", fontSize: 12 }}>
-            <span className="hidden sm:inline">Leave game</span>
-            <span className="sm:hidden">✕</span>
-        </button>
-    );
-
-    const roundChip = (
-        <span className="tape font-loud flex-none" style={{ border: "2.5px solid var(--outline)", borderRadius: 11, ...hardShadow(3, 3), padding: "7px 12px", fontWeight: 700, fontSize: 12, letterSpacing: ".05em", background: "var(--card)", transform: "rotate(-1.5deg)" }}>
-            <span className="hidden sm:inline">Round {round} / {totalRounds}</span>
-            <span className="sm:hidden">R{round}/{totalRounds}</span>
-        </span>
-    );
+    const groups = groupsOf(phase === "scoring" ? word : isDrawer ? word : null, hint, wordLength);
+    const label =
+        phase === "scoring" ? "the spell was" :
+            isDrawer ? "casting" :
+                `${drawerName} is casting`;
 
     return (
-        <div className="space-y-3 lg:space-y-0">
-            {/* header row */}
-            <div className="flex items-center gap-3 lg:gap-4">
-                {roundChip}
-
-                <div className="flex-1 min-w-0 text-center">
-                    <div className="hidden lg:block">{renderMiddle()}</div>
-                    <div className="lg:hidden">{renderMobileLabel()}</div>
-                </div>
-
-                <div className="flex items-center gap-2 lg:gap-3 flex-none">
-                    <span className="lg:hidden">{ring(44, 30, 15)}</span>
-                    <span className="hidden lg:inline-grid">{ring(62, 46, 21)}</span>
-                    {leaveBtn}
-                </div>
+        <div className="flex items-center gap-3 lg:gap-4">
+            {/* left — a back button on phones; the mark and the round on wide screens */}
+            <Ghost onClick={onLeave} title="leave the circle" className="sm:hidden" style={{ width: 44, minWidth: 44, padding: 0, fontSize: 17 }}>
+                ←
+            </Ghost>
+            <div className="hidden sm:flex items-center gap-3.5 flex-none">
+                <Wordmark size={22} onNight inline />
+                <span
+                    className="eyebrow flex-none whitespace-nowrap"
+                    style={{
+                        border: "2px solid rgba(242,227,191,.4)", borderRadius: 9, padding: "4px 10px",
+                        fontSize: 11, letterSpacing: ".14em", color: "rgba(242,227,191,.7)",
+                    }}
+                >
+                    ROUND {round}/{totalRounds}
+                </span>
             </div>
 
-            {/* mobile-only word row — keeps the masked word / length on screen with the chat */}
-            {phase === "drawing" && <div className="lg:hidden">{renderMobileWord()}</div>}
+            {/* middle — the plaque */}
+            <div className="flex-1 min-w-0 flex justify-center">
+                {groups.length > 0 ? (
+                    <div
+                        className="card tilt max-w-full"
+                        style={{
+                            ["--tilt" as string]: "-1.4deg",
+                            borderRadius: 12, padding: "6px 10px",
+                            boxShadow: "4px 4px 0 rgba(0,0,0,.42)",
+                        }}
+                    >
+                        <InkEyebrow dim={0.45} size={8.5} style={{ letterSpacing: ".18em", textAlign: "center" }}>{label}</InkEyebrow>
+                        <div className="mt-1.5">
+                            <MaskedWord groups={groups} size="clamp(13px, 3.6vw, 21px)" />
+                        </div>
+                    </div>
+                ) : (
+                    <span
+                        className="truncate"
+                        style={{ fontFamily: "var(--font-loud)", fontStyle: "italic", fontWeight: 700, fontSize: 15, color: "rgba(242,227,191,.55)" }}
+                    >
+                        {isDrawer ? "choose thy spell…" : `${drawerName} is choosing…`}
+                    </span>
+                )}
+            </div>
+
+            {/* right — the candle and the way out */}
+            <div className="flex items-center gap-2.5 lg:gap-3.5 flex-none">
+                <span className="lg:hidden"><CandleTimer endsAt={endsAt} totalMs={totalMs} w={16} h={34} numeral={22} /></span>
+                <span className="hidden lg:inline-flex"><CandleTimer endsAt={endsAt} totalMs={totalMs} w={20} h={44} numeral={28} /></span>
+                <Ghost onClick={onLeave} title="leave the circle" className="hidden sm:inline-grid" style={{ minWidth: 44, padding: "0 12px" }}>
+                    leave
+                </Ghost>
+            </div>
         </div>
     );
 }

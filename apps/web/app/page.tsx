@@ -8,20 +8,21 @@ import Lobby from "./components/Lobby";
 import GameScreen from "./components/game/GameScreen";
 import GameOver from "./components/game/GameOver";
 import Chat from "./components/game/Chat";
-import { RoomNotFound, RoomFull, Disconnected } from "./components/game/StateScreens";
+import { Fizzled, JOIN_ERRORS } from "./components/game/StateScreens";
+import { Night } from "./components/ui/Bits";
+import { getMyAvatar } from "./lib/myAvatar";
 import HistoryScreen from "./components/HistoryScreen";
 import LoginScreen from "./components/auth/LoginScreen";
 import SignupScreen from "./components/auth/SignupScreen";
 import MatchDetailScreen from "./components/MatchDetailScreen";
 
 const SERVER = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:3001";
+const PAGE = 20;   // the handoff pages the chronicle 20 rites at a time
 export default function Home() {
-  const [status, setStatus] = useState<string>("connecting...");
-  const [socketId, setSocketId] = useState<string>("(none)");
-  const [log, setLog] = useState<string[]>([]);
   const [roomState, setRoomState] = useState<RoomState | null>(null)
   const socketRef = useRef<Socket | null>(null);
   const roomStateRef = useRef<RoomState | null>(null);   // latest room, readable inside socket handlers
+  const playerIdRef = useRef("");                        // ditto, for the identity check
   const [playerId, setPlayerId] = useState("");
 const [user, setUser] = useState<PublicUser | null>(null);
 const [authError, setAuthError] = useState<string | null>(null);
@@ -30,6 +31,8 @@ const [authError, setAuthError] = useState<string | null>(null);
   const [history, setHistory] = useState<MatchSummary[]>([]);
   const [stats, setStats] = useState<PlayerStats | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyLimit, setHistoryLimit] = useState(PAGE);
+  const [historyDone, setHistoryDone] = useState(false);
   const [matchDetail, setMatchDetail] = useState<MatchDetail | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
 
@@ -41,10 +44,11 @@ const [authError, setAuthError] = useState<string | null>(null);
  const [disconnected, setDisconnected] = useState(false);
   const [reconnectSeconds, setReconnectSeconds] = useState(30);
   const [inviteCode, setInviteCode] = useState<string | null>(null);
+  const [emphasizeCode, setEmphasizeCode] = useState(false);
 
-  const addLog = (line: string) => {
-    setLog((prev) => [...prev, `[${new Date().toLocaleTimeString([], { hour12: false })}] ${line}`]);
-  };
+  // Debug trail only. This used to be React state that nothing rendered, so
+  // every socket event re-rendered the whole app and grew an array for ever.
+  const addLog = (line: string) => console.debug("[scrawl]", line);
 
  
   const addSystem = (text: string) =>
@@ -52,6 +56,7 @@ const [authError, setAuthError] = useState<string | null>(null);
 
 
   useEffect(() => { roomStateRef.current = roomState; }, [roomState]);
+  useEffect(() => { playerIdRef.current = playerId; }, [playerId]);
 
   
   useEffect(() => {
@@ -67,36 +72,34 @@ const [authError, setAuthError] = useState<string | null>(null);
       const meRes = await fetch(`${SERVER}/api/me`, { credentials: "include" });
       const meJson = await meRes.json();
       if (cancelled) return;
-      const myId: string = meJson.playerId;
+      const myId: string = meJson.playerId ?? "";   // "" = a visitor the server has never met
       setPlayerId(myId);
+      playerIdRef.current = myId;
       setUser(meJson.user ?? null);
       const socket = io(SERVER, { withCredentials: true });
       socketRef.current = socket;
       socket.on("connect", () => {
-        setStatus("connected");
-        setSocketId(socket.id ?? "(unknown)");
         addLog(`connected with id ${socket.id}`);
         const rs = roomStateRef.current;
         if (rs) {
 
-          const me = rs.players.find((p) => p.id === myId);
-          socket.emit("join_room", { name: me?.name ?? "Player", code: rs.roomId }, (res: RoomResponse) => {
+          const me = rs.players.find((p) => p.id === playerIdRef.current);
+          socket.emit("join_room", { name: me?.name ?? "Player", code: rs.roomId, avatar: getMyAvatar() }, (res: RoomResponse) => {
             if (res.success && res.room) setRoomState(res.room);
           });
           setDisconnected(false);
-          addSystem("reconnected");
+          addSystem("the circle has you again");
         } else {
-          addSystem("connected");
+          addSystem("the circle is open");
         }
       });
 
       socket.on("disconnect", () => {
-        setStatus("disconnected");
         addLog("disconnected");
         // only surface the overlay if we were actually in a room (not on first load)
         if (roomStateRef.current) {
           setDisconnected(true);
-          addSystem("connection lost — reconnecting…");
+          addSystem("the thread frayed — reaching for you…");
         }
       });
 
@@ -126,6 +129,41 @@ const [authError, setAuthError] = useState<string | null>(null);
     return () => clearInterval(id);
   }, [disconnected]);
 
+  /** Wait for the socket to come back up after a cookie change. */
+  const reconnectAndWait = () => new Promise<void>((resolve) => {
+    const s = socketRef.current;
+    if (!s) return resolve();
+    const done = () => { s.off("connect", done); resolve(); };
+    s.once("connect", done);
+    s.disconnect();
+    s.connect();
+    setTimeout(done, 4000);
+  });
+
+  /**
+   * Become someone, if we are not already.
+   *
+   * Looking at the front page mints nothing — the server only knows you once
+   * you summon a circle or walk into one. The new cookie arrives over HTTP, so
+   * the socket has to shake hands again before it counts as anyone.
+   */
+  const ensureIdentity = async (): Promise<string | null> => {
+    if (playerIdRef.current) return playerIdRef.current;
+    try {
+      const res = await fetch(`${SERVER}/api/me`, { method: "POST", credentials: "include" });
+      if (!res.ok) return null;
+      const data = await res.json();
+      const id: string = data.playerId;
+      setPlayerId(id);
+      playerIdRef.current = id;
+      setUser(data.user ?? null);
+      await reconnectAndWait();
+      return id;
+    } catch {
+      return null;
+    }
+  };
+
   const handleSendMessage = (text: string) => {
     const socket = socketRef.current;
     if (!socket) return;
@@ -138,36 +176,37 @@ const [authError, setAuthError] = useState<string | null>(null);
     socket.emit("choose_word", { word });
 
   };
-  const handleCreate = (name: string) => {
+  const handleCreate = async (name: string, emphasizeCode = false) => {
     const socket = socketRef.current;
     if (!socket || !name) {
       addLog("Error: Name is required to create a room.");
       return;
     }
+    if (!(await ensureIdentity())) { setJoinFail({ kind: "notfound", code: "" }); return; }
     addLog(`Creating room for ${name}...`);
 
-    socket.emit("create_room", { name }, (res: RoomResponse) => {
+    socket.emit("create_room", { name, avatar: getMyAvatar() }, (res: RoomResponse) => {
       if (res.success) {
         setJoinFail(null);
         setRoomState(res.room ?? null)
-        setStatus(`Rooms ID: ${res.roomId}`);
+        setEmphasizeCode(emphasizeCode);   // "summon a private circle" → show the code off
       }
     });
   };
 
-  const handleJoin = (name: string, code: string) => {
+  const handleJoin = async (name: string, code: string) => {
     const socket = socketRef.current;
     if (!socket || !name || !code) {
       addLog("Error: Name and Room Code are required to join.");
       return;
     }
+    if (!(await ensureIdentity())) { setJoinFail({ kind: "notfound", code }); return; }
     addLog(`${name} attempting to join room: ${code}...`);
 
-    socket.emit("join_room", { name, code }, (res: RoomResponse) => {
+    socket.emit("join_room", { name, code, avatar: getMyAvatar() }, (res: RoomResponse) => {
       if (res.success) {
         setJoinFail(null);
         setRoomState(res.room ?? null)
-        setStatus(`Rooms ID: ${res.roomId}`);
         // clean the invite param so a refresh doesn't re-trigger the invite flow
         setInviteCode(null);
         window.history.replaceState({}, "", window.location.pathname);
@@ -215,23 +254,34 @@ const [authError, setAuthError] = useState<string | null>(null);
     if (status === 429) return "Too many attempts. Try again in a few minutes.";
     return "Something went wrong. Try again.";
   } 
-    const openHistory = async () => {
-    setShowHistory(true);
+  // One page at a time, and the two requests land independently so the stats
+  // don't wait on the list. Whatever was already fetched stays on screen while
+  // a refresh is in flight.
+  const fetchHistory = async (limit: number) => {
     setHistoryLoading(true);
     try {
-      const [h, st] = await Promise.all([
-        fetch(`${SERVER}/api/history?limit=50`, { credentials: "include" }).then((r) => r.json()),
-        fetch(`${SERVER}/api/stats`, { credentials: "include" }).then((r) => r.json()),
-      ]);
-      setHistory(Array.isArray(h) ? h : []);
-      setStats(st && typeof st === "object" && "matchesPlayed" in st ? st : null);
+      const rows = await fetch(`${SERVER}/api/history?limit=${limit}`, { credentials: "include" }).then((r) => r.json());
+      const list = Array.isArray(rows) ? rows : [];
+      setHistory(list);
+      setHistoryLimit(limit);
+      setHistoryDone(list.length < limit);
     } catch {
-      setHistory([]);
-      setStats(null);
+      setHistoryDone(true);
     } finally {
       setHistoryLoading(false);
     }
   };
+
+  const openHistory = () => {
+    setShowHistory(true);
+    fetchHistory(PAGE);
+    fetch(`${SERVER}/api/stats`, { credentials: "include" })
+      .then((r) => r.json())
+      .then((st) => setStats(st && typeof st === "object" && "matchesPlayed" in st ? st : null))
+      .catch(() => setStats(null));
+  };
+
+  const loadOlderRites = () => fetchHistory(historyLimit + PAGE);
 
   const openMatch = async (id: string) => {
     setDetailOpen(true);
@@ -257,6 +307,8 @@ const [authError, setAuthError] = useState<string | null>(null);
     // NO reconnect — same player, it was claimed not replaced
   const handleSignup = async (email: string, password: string, username: string) => {
     setAuthError(null);
+    // signing the register claims the guest you already are, so be someone first
+    if (!(await ensureIdentity())) return setAuthError("Could not reach the guild. Try again.");
     const { ok, status, data } = await post("/api/signup", { email, password, username });
     if (!ok) return setAuthError(authMessage(status, data));
     setUser(data.user);
@@ -330,6 +382,8 @@ const [authError, setAuthError] = useState<string | null>(null);
           stats={stats}
           user={user}
           loading={historyLoading}
+          hasMore={!historyDone}
+          onLoadMore={loadOlderRites}
           onOpenMatch={openMatch}
           onClose={() => setShowHistory(false)}
         />
@@ -337,19 +391,11 @@ const [authError, setAuthError] = useState<string | null>(null);
     }
 
     if (roomState === null) {
-      // a join attempt bounced — show the matching error screen instead of the form
-      if (joinFail) {
-        return (
-          <div className="min-h-screen grid place-items-center p-5">
-            {joinFail.kind === "full"
-              ? <RoomFull onLeave={() => setJoinFail(null)} />
-              : <RoomNotFound code={joinFail.code} onRetry={() => setJoinFail(null)} />}
-          </div>
-        );
-      }
+      // a bounced join reads on the field itself — the handoff never sends it full-frame
       return <JoinScreen
-      onCreate={handleCreate} onJoin={handleJoin}
+        onCreate={handleCreate} onJoin={handleJoin}
         playerCount={playerCount} inviteCode={inviteCode}
+        joinError={joinFail ? (joinFail.kind === "full" ? JOIN_ERRORS.full : JOIN_ERRORS.notFound) : null}
         user={user} onLogout={handleLogout}
         onOpenLogin={() => { setAuthError(null); setAuthView("login"); }}
         onOpenSignup={() => { setAuthError(null); setAuthView("signup"); }}
@@ -375,35 +421,36 @@ const [authError, setAuthError] = useState<string | null>(null);
     }
 
     // lobby / game-over: the screen with the chat sidebar (stacks on mobile)
-    const screen = roomState.status === "waiting"
-      ? <Lobby room={roomState} isHost={isHost} wordLists={wordLists} onLeave={handleLeave} onStart={handleStart} onUpdateSettings={handleUpdateSettings} />
-      : <GameOver room={roomState} isHost={isHost} onPlayAgain={handlePlayAgain} onLeave={handleLeave} />;
+    const waiting = roomState.status === "waiting";
+    const screen = waiting
+      ? <Lobby room={roomState} isHost={isHost} wordLists={wordLists} onLeave={handleLeave} onStart={handleStart} onUpdateSettings={handleUpdateSettings} onOpenHistory={openHistory} emphasizeCode={emphasizeCode} />
+      : <GameOver room={roomState} isHost={isHost} onPlayAgain={handlePlayAgain} onLeave={handleLeave} onOpenHistory={openHistory} />;
 
     return (
-      <div className="max-w-6xl mx-auto p-4 sm:p-6 flex flex-col lg:flex-row gap-4">
-        <div className="flex-1 min-w-0">{screen}</div>
-        <Chat messages={messages} onSend={handleSendMessage} />
-      </div>
+      <Night className="p-4 sm:p-7" glow="rgba(255,214,140,.13)" x="50%" y={waiting ? "0%" : "22%"}>
+        <div className="max-w-[1240px] mx-auto flex flex-col lg:flex-row gap-6">
+          <div className="flex-1 min-w-0">{screen}</div>
+          <div className="flex-none lg:pl-4 lg:border-l-2 lg:border-dashed lg:border-parchment/20 flex">
+            <Chat messages={messages} onSend={handleSendMessage} players={roomState.players} />
+          </div>
+        </div>
+      </Night>
     );
   }
 
   return (
-    <main className="paper-bg min-h-screen text-ink">
+    <main className="flex-1 flex flex-col">
       {renderBody()}
 
-      {/* dropped-connection overlay — socket.io auto-reconnects; the button forces it */}
+      {/* 09 · the spell fizzled — socket.io auto-reconnects; the button forces it */}
       {disconnected && roomState && (
-        <div className="fixed inset-0 z-50 grid place-items-center p-5" style={{ background: "rgba(58,47,38,.55)" }}>
-          <div
-            className="w-full max-w-[460px] overflow-hidden"
-            style={{ border: "3px solid var(--outline)", borderRadius: "18px 8px 20px 10px", boxShadow: "0 16px 34px rgba(58,47,38,.35)" }}
-          >
-            <Disconnected
-              secondsLeft={reconnectSeconds}
-              onReconnect={() => socketRef.current?.connect()}
-              onGiveUp={() => { setDisconnected(false); setRoomState(null); }}
-            />
-          </div>
+        <div className="fixed inset-0 z-50 overflow-auto">
+          <Fizzled
+            secondsLeft={reconnectSeconds}
+            code={roomState.roomId}
+            onReconnect={() => socketRef.current?.connect()}
+            onGiveUp={() => { setDisconnected(false); setRoomState(null); }}
+          />
         </div>
       )}
     </main>
