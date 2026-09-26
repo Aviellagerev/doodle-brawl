@@ -2,6 +2,7 @@ import test, { before } from "node:test";
 import assert from "node:assert/strict";
 import { Client, wait , resetRateLimits} from "./helpers.js";
 import { CHOOSE_TIME_MS } from "../../../packages/shared/index.js";
+import { hintForm } from "../src/game/skribbl.js";
 
 before(resetRateLimits);
 
@@ -116,7 +117,7 @@ test("the round loop: choose, draw, guess, score", async (t) => {
 
   const drawing = await diviner.waitForRoom((r) => r.game?.phase === "drawing", "the drawing phase");
   assert.equal(drawing.game!.word, null, "the spell itself is hidden from diviners");
-  assert.equal(drawing.game!.wordLength, word.length, "…but its length is not");
+  assert.equal(drawing.game!.wordLength, [...hintForm(word)].length, "…but how many blanks it has is not");
   assert.equal(caster.room!.game!.word, word, "the caster can see what they drew");
 
   // a wrong guess is just chat; the right one scores
@@ -234,4 +235,121 @@ test("a new arrival is told the player count at once", async (t) => {
 
   assert.ok(c.counts.length > 0, "the count arrived without waiting for the 30s sweep");
   assert.ok(c.counts[0] >= 0, "and it is a number");
+});
+
+/** A rite whose only spell is `word`, cast by the host (who always draws first). */
+async function riteOf(word: string, ...names: string[]) {
+  const host = await new Client("host").connect();
+  const others = await Promise.all(names.map((n) => new Client(n).connect()));
+  const made = await host.ask("create_room", { name: "Gorbo" });
+  host.socket.emit("update_settings", {
+    ...made.room!.settings, rounds: 1, drawTimeMs: 20_000, wordChoices: 1,
+    customWords: [word], customWordsOnly: true,
+  });
+  await host.waitForRoom((r) => r.settings.customWordsOnly, "own words only");
+  for (const [i, c] of others.entries()) await c.ask("join_room", { name: names[i], code: made.roomId });
+  await host.waitForRoom((r) => r.players.length === others.length + 1, "the whole coven");
+
+  host.socket.emit("start_game", made.roomId);
+  const offer = await host.waitForRoom((r) => !!r.game?.wordOptions?.length, "the offering");
+  assert.equal(offer.game!.currentDrawerId, host.playerId, "the host casts first");
+  host.socket.emit("choose_word", { word: offer.game!.wordOptions![0].word });
+  await Promise.all([host, ...others].map((c) => c.waitForRoom((r) => r.game?.phase === "drawing", "drawing")));
+  return { host, others, close: () => [host, ...others].forEach((c) => c.close()) };
+}
+
+test("an accented spell is divined without the accent", async (t) => {
+  const { host, others: [diviner], close } = await riteOf("Café", "Miffwick");
+  t.after(close);
+  assert.equal(host.room!.game!.word, "Café");
+
+  diviner.say("CAFE");   // no accent, wrong case — as a phone keyboard might send it
+  const scoring = await diviner.waitForRoom((r) => r.game?.phase === "scoring", "the reckoning", 12_000);
+  assert.ok(scoring.game!.guessedIds.includes(diviner.playerId), "the plain spelling divined it");
+});
+
+test("a geresh is no blank, and needn't be typed", async (t) => {
+  const { others: [diviner], close } = await riteOf("ג'ירפה", "Miffwick");
+  t.after(close);
+  assert.deepEqual(diviner.room!.game!.hint, ["", "", "", "", ""], "five blanks, nothing between them");
+  assert.equal(diviner.room!.game!.wordLength, 5);
+  assert.equal(diviner.room!.game!.wordDir, "rtl", "so the blanks are laid out right to left");
+
+  diviner.say("גירפה");
+  const scoring = await diviner.waitForRoom((r) => r.game?.phase === "scoring", "the reckoning", 12_000);
+  assert.ok(scoring.game!.guessedIds.includes(diviner.playerId), "divined without the geresh");
+  assert.equal(scoring.game!.word, "ג'ירפה", "the reveal still spells it properly");
+});
+
+test("one letter off is whispered to the guesser alone", async (t) => {
+  const { host, others: [near, far], close } = await riteOf("kettle", "Near", "Far");
+  t.after(close);
+
+  near.say("kettel");
+  await wait(500);
+  const hint = near.chat.find((m) => m.kind === "close");
+  assert.equal(hint?.text, "kettel", "the guesser is told they were close");
+  for (const c of [host, far]) {
+    assert.ok(!c.chat.some((m) => m.text.includes("kettel")), `${c.name} never saw the near-miss`);
+  }
+  assert.equal(far.room!.game!.guessedIds.length, 0, "a near-miss divines nothing");
+});
+
+test("a diviner sees the spell, and may not say it", async (t) => {
+  const { host, others: [first, second], close } = await riteOf("kettle", "First", "Second");
+  t.after(close);
+
+  first.say("kettle");
+  const knows = await first.waitForRoom((r) => r.game?.guessedIds.includes(first.playerId) ?? false, "credit");
+  assert.equal(knows.game!.word, "kettle", "divining it shows it");
+  await second.waitForRoom((r) => r.game?.guessedIds.includes(first.playerId) ?? false, "the others to hear");
+  assert.equal(second.room!.game!.word, null, "…to the one who divined it, only");
+
+  first.say("it's a kettle lol");
+  host.say("kettel");
+  await wait(500);
+  for (const [c, line] of [[first, "it's a kettle lol"], [host, "kettel"]] as const) {
+    assert.ok(c.chat.some((m) => m.kind === "system" && /hush/.test(m.text)), `${c.name} is hushed`);
+    assert.ok(!second.chat.some((m) => m.text === line), `"${line}" never reached the one still guessing`);
+  }
+
+  first.say("well drawn");
+  await wait(300);
+  assert.ok(second.chat.some((m) => m.text === "well drawn"), "ordinary chat still carries");
+});
+
+test("grimoires are checked against the books that exist", async (t) => {
+  const host = await new Client("host").connect();
+  t.after(() => host.close());
+  const made = await host.ask("create_room", { name: "Gorbo" });
+  const books = host.wordMeta[made.room!.settings.language] ?? [];
+  assert.ok(books.length > 1, "the server named its grimoires");
+
+  host.socket.emit("update_settings", { ...made.room!.settings, lists: [books[0], "no-such-book", 42] });
+  const narrowed = await host.waitForRoom((r) => r.settings.lists.length > 0, "the narrowed shelf");
+  assert.deepEqual(narrowed.settings.lists, [books[0]], "only real books survive");
+
+  host.socket.emit("update_settings", { ...narrowed.settings, lists: [...books] });
+  const all = await host.waitForRoom((r) => r.settings.lists.length === 0, "every book open");
+  assert.deepEqual(all.settings.lists, [], "every book open is written as no filter");
+});
+
+test("wizards guessing in the same instant are all counted", async (t) => {
+  const { host, others: [a, b, c], close } = await riteOf("kettle", "A", "B", "C");
+  t.after(close);
+
+  // one tick: each handler used to read the room before the others wrote it
+  // back, so all but one of these vanished — a wrong guess could erase a right one
+  c.say("teapot");
+  a.say("kettle");
+  b.say("kettle");
+
+  const both = await host.waitForRoom(
+    (r) => [a, b].every((x) => r.game?.guessedIds.includes(x.playerId)), "both diviners credited", 4000);
+  for (const x of [a, b]) {
+    assert.ok((both.players.find((p) => p.id === x.playerId)?.score ?? 0) > 0, `${x.name} was paid`);
+  }
+
+  c.say("kettle");
+  await host.waitForRoom((r) => r.game?.phase === "scoring", "the turn to end the moment all have it", 4000);
 });

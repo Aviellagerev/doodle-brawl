@@ -15,6 +15,11 @@ export function difficultyForList(list: string): Difficulty {
   return "normal";
 }
 
+/** One spell as it is stored: composed (NFC), single-spaced, trimmed. */
+export function tidyWord(s: string): string {
+  return s.normalize("NFC").replace(/\s+/g, " ").trim();
+}
+
 export interface WordEntry {
   word: string;
   lang: string;   // "en" | "he" | ...
@@ -44,7 +49,9 @@ function loadBank(): WordEntry[] {
     }
     const [, lang, list] = m;
     const raw = readFileSync(path.join(WORDS_DIR, file), "utf8");
-    for (const w of raw.split(/[,\n]/).map((s) => s.trim()).filter(Boolean)) {
+    // NFC, so an accented letter is one character however the file was saved —
+    // the hint mask counts letters, and a stray combining mark would be a slot
+    for (const w of raw.split(/[,\n]/).map(tidyWord).filter(Boolean)) {
       entries.push({ word: w, lang, list });
     }
   }

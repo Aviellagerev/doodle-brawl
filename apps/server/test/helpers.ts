@@ -12,6 +12,7 @@ export class Client {
   rooms: RoomState[] = [];
   chat: ChatMessage[] = [];
   counts: number[] = [];
+  wordMeta: Record<string, string[]> = {};
 
   constructor(readonly name: string) { }
 
@@ -35,6 +36,7 @@ export class Client {
     this.socket.on("room_update", (r: RoomState) => this.rooms.push(r));
     this.socket.on("chat_message", (m: ChatMessage) => this.chat.push(m));
     this.socket.on("player_count", (n: number) => this.counts.push(n));
+    this.socket.on("word_meta", (m: Record<string, string[]>) => { this.wordMeta = m; });
     await new Promise<void>((ok, fail) => {
       this.socket.once("connect", () => ok());
       this.socket.once("connect_error", (e) => fail(e));
