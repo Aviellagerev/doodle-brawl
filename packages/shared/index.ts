@@ -178,6 +178,9 @@ export interface GameState {
   // per-letter reveal shown to guessers: "" = hidden, " " = space, else the letter.
   // Only ever holds revealed letters (safe to broadcast); null outside "drawing".
   hint: string[] | null;
+  // which way the chosen spell is written, so its blanks are laid out in reading
+  // order (a Hebrew spell's first word on the right) before any letter shows
+  wordDir?: "ltr" | "rtl" | null;
   
   payout: PayoutEntry[] | null;
   turnStartedAt: number | null;  
@@ -214,7 +217,9 @@ export type DrawEntry =
 export interface ChatMessage {
   author: string;
   text: string;
-  kind: "chat" | "system" | "correct";   // correct = someone guessed the word
+  // correct = someone guessed the word · close = your own guess, one letter
+  // off: sent to you alone, and never stored under this kind
+  kind: "chat" | "system" | "correct" | "close";
   playerId?: string;
 }
 

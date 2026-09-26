@@ -4,6 +4,7 @@ import {
   WordOption, Difficulty, DIFFICULTY_POINTS, DIFFICULTY_MULTIPLIER,
 } from "../../../../packages/shared/index.js";
 import { WORD_BANK, difficultyForList } from "./words.js";
+import { foldGuess } from "./guess.js";
 
 
 function makeOption(word: string, difficulty: Difficulty): WordOption {
@@ -37,31 +38,46 @@ export function canAdvance(from: GamePhase, to: GamePhase): boolean {
 }
 
 
+// `count` distinct picks, uniformly (a partial Fisher–Yates).
+function sample<T>(items: T[], count: number): T[] {
+  const a = [...items];
+  const n = Math.min(count, a.length);
+  for (let i = 0; i < n; i++) {
+    const j = i + Math.floor(Math.random() * (a.length - i));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a.slice(0, n);
+}
+
 export function pickWords(count: number, settings: RoomSettings): WordOption[] {
   const custom = settings.customWords.map((w) => w.trim()).filter(Boolean);
 
-  // dedupe by word (first occurrence wins), tracking each word's difficulty
-  const byWord = new Map<string, Difficulty>();
+  // one option per spell as a guesser would type it (so "Cat" and "cat" are
+  // one), the first occurrence keeping its spelling and difficulty
+  const byKey = new Map<string, WordOption>();
+  const add = (word: string, difficulty: Difficulty) => {
+    const key = foldGuess(word) || word;
+    if (!byKey.has(key)) byKey.set(key, makeOption(word, difficulty));
+  };
 
-  if (settings.customWordsOnly) {
-    for (const w of custom) if (!byWord.has(w)) byWord.set(w, "normal");
+  // "only these" with nothing written would offer nothing — the grimoires stand in
+  if (settings.customWordsOnly && custom.length) {
+    for (const w of custom) add(w, "normal");
   } else {
     let bank = WORD_BANK.filter((e) => e.lang === settings.language);
     if (settings.lists.length) {
       const narrowed = bank.filter((e) => settings.lists.includes(e.list));
       if (narrowed.length) bank = narrowed; // don't let a bad filter empty the pool
     }
-    for (const e of bank) if (!byWord.has(e.word)) byWord.set(e.word, difficultyForList(e.list));
-    for (const w of custom) if (!byWord.has(w)) byWord.set(w, "normal");
+    for (const e of bank) add(e.word, difficultyForList(e.list));
+    for (const w of custom) add(w, "normal");
   }
 
-  if (byWord.size === 0) {
+  if (byKey.size === 0) {
     // last resort — never leave the drawer with nothing to pick
-    return WORD_BANK.slice(0, count).map((e) => makeOption(e.word, difficultyForList(e.list)));
+    return sample(WORD_BANK, count).map((e) => makeOption(e.word, difficultyForList(e.list)));
   }
-
-  const words = [...byWord.keys()].sort(() => 0.5 - Math.random()).slice(0, Math.min(count, byWord.size));
-  return words.map((w) => makeOption(w, byWord.get(w)!));
+  return sample([...byKey.values()], count);
 }
 
 // A fresh "choosing" turn for the given drawer.
@@ -81,13 +97,37 @@ function choosingTurn(drawerId: string, round: number, drawnThisRound: string[])
     wordPoints: null,
     rerollsLeft: 2,
     hint: null,
+    wordDir: null,
     payout: null,
   };
 }
 
-// Build the initial reveal mask for a word: spaces shown, every letter hidden.
+// The spell as its blanks count it: letters only, one space between its
+// words. An apostrophe or a geresh is not a letter — ג'ירפה is five blanks,
+// not six, with nothing in the middle — and a hyphen parts words the way a
+// space does. A guess ignores both, so nothing is lost by leaving them out.
+// (A spell with no letters at all — a host's emoji — keeps its own form.)
+export function hintForm(word: string): string {
+  const letters = word
+    .replace(/\p{Pd}/gu, " ")               // hyphens, dashes, the Hebrew maqaf
+    .replace(/[^\p{L}\p{N}\s]/gu, "")       // apostrophes, geresh, dots, niqqud
+    .replace(/\s+/g, " ")
+    .trim();
+  return letters || word;
+}
+
+// Which way a spell is written — decided by its first letter, as a browser
+// would for dir="auto". Shared with everyone: it is no more of a clue than the
+// room's tongue, and without it the blanks of a Hebrew spell read backwards.
+export function writingDirection(word: string): "ltr" | "rtl" {
+  const first = word.match(/\p{L}/u)?.[0] ?? "";
+  return /\p{Script=Hebrew}|\p{Script=Arabic}/u.test(first) ? "rtl" : "ltr";
+}
+
+// Build the initial reveal mask for a word: one blank per letter of its
+// hint form, and the spaces between its words.
 export function initialHint(word: string): string[] {
-  return [...word].map((c) => (c === " " ? " " : ""));
+  return [...hintForm(word)].map((c) => (c === " " ? " " : ""));
 }
 
 // Reveal one more random hidden letter, keeping at least one letter hidden.
@@ -98,7 +138,7 @@ export function revealHintLetter(game: GameState): boolean {
   for (let i = 0; i < game.hint.length; i++) if (game.hint[i] === "") hidden.push(i);
   if (hidden.length <= 1) return false;   // never uncover the last letter
   const i = hidden[Math.floor(Math.random() * hidden.length)];
-  game.hint[i] = game.word[i];
+  game.hint[i] = [...hintForm(game.word)][i];   // from the same form the mask was built on
   return true;
 }
 
@@ -115,6 +155,14 @@ export function publicRoom(room: RoomState): RoomState {
   return { ...room, game: { ...room.game, word: null, wordOptions: null } };
 }
 
+// The room as one wizard may see it: the caster sees the spell, and so does
+// anyone who has already divined it; everyone else gets the public view.
+export function viewFor(room: RoomState, playerId: string): RoomState {
+  const game = room.game;
+  const knows = !!game && (game.currentDrawerId === playerId || game.guessedIds.includes(playerId));
+  return knows ? room : publicRoom(room);
+}
+
 
 export function chooseWord(game: GameState, word: string, now: number, drawTimeMs: number): GameState {
   if (!canAdvance(game.phase, "drawing")) {
@@ -128,13 +176,14 @@ export function chooseWord(game: GameState, word: string, now: number, drawTimeM
     ...game,
     phase: "drawing",
     word,
-    wordLength: word.length,
+    wordLength: [...hintForm(word)].length,   // the blanks, not the characters
     endsAt: now + drawTimeMs,
     guessedIds: [],
     wordOptions: null,   // options consumed once a word is chosen
     wordDifficulty: difficulty,
     wordPoints: points,
     hint: initialHint(word),
+    wordDir: writingDirection(word),
     payout: [],   // fresh per-turn score breakdown; filled as players guess
     turnStartedAt: now
   };

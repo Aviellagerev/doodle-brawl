@@ -155,6 +155,27 @@ test("absurd settings are clamped, not obeyed", async (t) => {
   assert.ok(s.hints <= 5, `hints capped, got ${s.hints}`);
 });
 
+test("walking in mid-spell does not hand you the spell", async (t) => {
+  const host = await new Client("host").connect();
+  const guest3 = await new Client("guest").connect();
+  const latecomer = await new Client("late").connect();
+  t.after(() => [host, guest3, latecomer].forEach((c) => c.close()));
+
+  const made = await host.ask("create_room", { name: "Keeper" });
+  await guest3.ask("join_room", { name: "Early", code: made.roomId });
+  await host.waitForRoom((r) => r.players.length === 2, "two wizards");
+  host.socket.emit("start_game", made.roomId);
+  const offer = await host.waitForRoom((r) => !!r.game?.wordOptions?.length, "the offering");
+  host.socket.emit("choose_word", { word: offer.game!.wordOptions![0].word });
+  await host.waitForRoom((r) => r.game?.phase === "drawing", "drawing");
+
+  // the join ack is a room update of its own, and used to be the unredacted room
+  const joined = await latecomer.ask("join_room", { name: "Late", code: made.roomId });
+  assert.equal(joined.success, true);
+  assert.equal(joined.room!.game!.phase, "drawing");
+  assert.equal(joined.room!.game!.word, null, "the spell stays hidden from the newcomer");
+});
+
 test("a hostile name or shout is carried as text, never as markup", async (t) => {
   const xss = '<img src=x onerror=alert(1)>';
   const host = await new Client("host").connect();
