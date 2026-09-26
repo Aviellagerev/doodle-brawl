@@ -15,6 +15,8 @@ import HistoryScreen from "./components/HistoryScreen";
 import LoginScreen from "./components/auth/LoginScreen";
 import SignupScreen from "./components/auth/SignupScreen";
 import MatchDetailScreen from "./components/MatchDetailScreen";
+import { useVisualViewport } from "./lib/useVisualViewport";
+import { sfx } from "./lib/sfx";
 
 const SERVER = process.env.NEXT_PUBLIC_SERVER_URL ?? "http://localhost:3001";
 const PAGE = 20;   // the handoff pages the chronicle 20 rites at a time
@@ -45,6 +47,7 @@ const [authError, setAuthError] = useState<string | null>(null);
   const [reconnectSeconds, setReconnectSeconds] = useState(30);
   const [inviteCode, setInviteCode] = useState<string | null>(null);
   const [emphasizeCode, setEmphasizeCode] = useState(false);
+  useVisualViewport();   // the game stage fits itself above a phone keyboard
 
   // Debug trail only. This used to be React state that nothing rendered, so
   // every socket event re-rendered the whole app and grew an array for ever.
@@ -56,6 +59,22 @@ const [authError, setAuthError] = useState<string | null>(null);
 
 
   useEffect(() => { roomStateRef.current = roomState; }, [roomState]);
+
+  // The guild's noises follow the room, whoever caused the change: stepping
+  // into a circle (or someone joining it), the candle being lit, the spell
+  // being spent. A right guess sounds from its own chat line.
+  const heardRef = useRef<RoomState | null>(null);
+  useEffect(() => {
+    const before = heardRef.current;
+    heardRef.current = roomState;
+    if (!roomState) return;
+    const same = before?.roomId === roomState.roomId ? before : null;
+    if (!same || roomState.players.some((p) => !same.players.some((q) => q.id === p.id))) sfx("join");
+    const was = same?.game?.phase;
+    const now = roomState.game?.phase;
+    if (now === "drawing" && was !== "drawing") sfx("roundStart");
+    if (now === "scoring" && was === "drawing") sfx("roundEnd");
+  }, [roomState]);
   useEffect(() => { playerIdRef.current = playerId; }, [playerId]);
 
   
@@ -109,7 +128,10 @@ const [authError, setAuthError] = useState<string | null>(null);
       socket.on("room_update", (room: RoomState) => setRoomState(room));
       socket.on("system_message", (msg: string) => addLog(msg));
 
-      socket.on("chat_message", (m: ChatMessage) => setMessages((prev) => [...prev, m]));
+      socket.on("chat_message", (m: ChatMessage) => {
+        setMessages((prev) => [...prev, m]);
+        if (m.kind === "correct") sfx("correct", m.playerId === playerIdRef.current);
+      });
       socket.on("word_meta", (m: Record<string, string[]>) => setWordLists(m));
       socket.on("player_count", (n: number) => setPlayerCount(n));
     })();
@@ -176,7 +198,7 @@ const [authError, setAuthError] = useState<string | null>(null);
     socket.emit("choose_word", { word });
 
   };
-  const handleCreate = async (name: string, emphasizeCode = false) => {
+  const handleCreate = async (name: string) => {
     const socket = socketRef.current;
     if (!socket || !name) {
       addLog("Error: Name is required to create a room.");
@@ -189,7 +211,7 @@ const [authError, setAuthError] = useState<string | null>(null);
       if (res.success) {
         setJoinFail(null);
         setRoomState(res.room ?? null)
-        setEmphasizeCode(emphasizeCode);   // "summon a private circle" → show the code off
+        setEmphasizeCode(true);   // a fresh circle: show its code off, it is what gets shared
       }
     });
   };

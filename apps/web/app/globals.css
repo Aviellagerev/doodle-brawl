@@ -133,6 +133,60 @@ body {
   box-shadow: inset 0 0 0 1px var(--tape-edge);
 }
 
+/* ── The game stage ────────────────────────────────────────────────────────── */
+
+/* While a spell is being drawn the screen is a fixed stage, sized to what the
+   visitor can actually see (--vv-h / --vv-top, from useVisualViewport). When a
+   phone keyboard opens the stage shrinks above it: the vellum gets smaller but
+   stays on screen, and the murmurings and the input sit on top of the keys. */
+.stage {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: var(--vv-top, 0px);
+  height: var(--vv-h, 100dvh);
+  overflow: hidden;
+  container: stage / size;
+}
+html:has(.stage) { overflow: hidden; overscroll-behavior: none; }
+
+/* The round rides on the word plaque wherever its own chip is not on show:
+   on phones, and on any short stage (below). */
+@media (min-width: 640px) {
+  .plaque-round { display: none; }
+}
+
+/* A short stage on a phone — the keyboard is up, or it is held sideways: what
+   is merely nice to have steps aside for the vellum and the input. */
+@container stage (max-height: 560px) and (max-width: 1023px) {
+  .when-roomy { display: none !important; }
+  .plaque-round { display: inline !important; }
+}
+
+/* …and a phone on its side has no height to stack in: the vellum and the
+   murmurings sit side by side instead. */
+@container stage (orientation: landscape) and (max-height: 520px) and (max-width: 1023px) {
+  .stage-row { flex-direction: row !important; }
+  .stage-row > .stage-board { flex: 1 1 0 !important; }
+  .stage-row > .stage-chat { flex: 0 0 42% !important; min-height: 0 !important; }
+}
+
+/* The scrying vellum keeps the canvas's own 4:3 on every screen. Strokes travel
+   as fractions of the canvas, so a vellum stretched to another shape would turn
+   the caster's circle into everyone else's egg. It is the largest 4:3 that fits
+   whatever box it is given. */
+.vellum-box {
+  container-type: size;
+  display: grid;
+  place-items: center;
+  min-height: 0;
+}
+.vellum {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  width: min(100cqw, 100cqh * 4 / 3);
+}
+
 /* ── Type ──────────────────────────────────────────────────────────────────── */
 
 .eyebrow {

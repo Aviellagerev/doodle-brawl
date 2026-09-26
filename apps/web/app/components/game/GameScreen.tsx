@@ -6,7 +6,7 @@ import WordPicker from "./WordPicker";
 import DrawingBoard from "./DrawingBoard";
 import Chat from "./Chat";
 import Avatar from "../Avatar";
-import { Night, Eyebrow, InkEyebrow, Ghost, Card, CodeChipNight } from "../ui/Bits";
+import { Night, Eyebrow, InkEyebrow, LeaveGhost, Card, CodeChipNight } from "../ui/Bits";
 
 import { CandleTimer } from "../ui/Candle";
 
@@ -27,6 +27,7 @@ export default function GameScreen({ room, myPlayerId, onChooseWord, socket, onL
     if (!game) return null;
 
     const isDrawer = game.currentDrawerId === myPlayerId;
+    const divined = game.guessedIds.includes(myPlayerId);
     const drawerName = room.players.find((p) => p.id === game.currentDrawerId)?.name ?? "Someone";
     const waitingCount = Math.max(0, room.players.length - 1);
 
@@ -54,10 +55,7 @@ export default function GameScreen({ room, myPlayerId, onChooseWord, socket, onL
                                 the candle<br />is watching
                             </span>
                             <CandleTimer endsAt={game.endsAt} totalMs={CHOOSE_TIME_MS} w={30} h={64} numeral={false} />
-                            <Ghost onClick={onLeave} style={{ minWidth: 44, padding: "0 12px" }}>
-                                <span className="hidden sm:inline">leave</span>
-                                <span className="sm:hidden">✕</span>
-                            </Ghost>
+                            <LeaveGhost onLeave={onLeave} confirm />
                         </div>
                     </div>
 
@@ -82,9 +80,11 @@ export default function GameScreen({ room, myPlayerId, onChooseWord, socket, onL
         <WordBar
             phase={game.phase}
             isDrawer={isDrawer}
+            divined={divined}
             word={game.word}
             wordLength={game.wordLength}
             hint={game.hint}
+            wordDir={game.wordDir ?? null}
             round={game.round}
             totalRounds={room.settings.rounds}
             drawerName={drawerName}
@@ -128,30 +128,38 @@ export default function GameScreen({ room, myPlayerId, onChooseWord, socket, onL
     }
 
     return (
+        // While drawing, the screen is a fixed stage the size of what can be
+        // seen (see .stage): a phone keyboard shrinks it instead of pushing the
+        // vellum off the top. Top to bottom on a phone — word bar, the coven's
+        // strip, the vellum, the murmurings and their input.
         <Night
+            screen={!drawing}
             className={
                 drawing
-                    ? "flex flex-col h-[100dvh] lg:overflow-hidden p-3 lg:p-6"
+                    ? "stage flex flex-col p-2.5 sm:p-3 lg:p-6"
                     : "flex flex-col p-4 lg:p-6"
             }
             glow={scoring ? "rgba(255,196,90,.24)" : "rgba(255,214,140,.13)"}
             x="50%"
             y={scoring ? "36%" : "0%"}
         >
-            <div className={`w-full lg:max-w-[1240px] lg:mx-auto flex flex-col flex-1 min-h-0 ${drawing ? "" : "justify-center"}`}>
+            {/* justify-end: if a phone ever runs out of height, the top gives way
+                and the input the guesser is typing into does not */}
+            <div className={`w-full lg:max-w-[1240px] lg:mx-auto flex flex-col flex-1 min-h-0 ${drawing ? "justify-end" : "justify-center"}`}>
                 {drawing && <div key="wordbar" className="flex-none">{wordBar}</div>}
 
                 <div
                     key="row"
                     className={
                         drawing
-                            ? "flex-1 min-h-0 flex flex-col lg:flex-row gap-3 lg:gap-4 lg:items-stretch mt-3 lg:mt-4"
+                            ? "stage-row flex-1 min-h-0 flex flex-col justify-end lg:flex-row gap-2 sm:gap-3 lg:gap-4 lg:items-stretch mt-2 sm:mt-3 lg:mt-4"
                             : "flex-1 flex flex-col lg:flex-row gap-6 lg:gap-8 lg:items-center lg:justify-center py-4"
                     }
                 >
-                    {/* the coven — under the canvas on phones, left column on desktop */}
+                    {/* the coven — a strip above the vellum on phones (it steps
+                        aside while the keyboard is up), left column on desktop */}
                     {drawing && (
-                        <div key="players" className="order-2 lg:order-1 flex-none w-full lg:w-[212px]">
+                        <div key="players" className="when-roomy flex-none w-full lg:w-[212px]">
                             <PlayerList players={room.players} currentDrawerId={game.currentDrawerId} guessedIds={game.guessedIds} myPlayerId={myPlayerId} />
                         </div>
                     )}
@@ -161,11 +169,11 @@ export default function GameScreen({ room, myPlayerId, onChooseWord, socket, onL
                         key="canvas"
                         className={
                             drawing
-                                ? "order-1 lg:order-2 flex-none lg:flex-1 min-w-0 w-full flex"
+                                ? "stage-board flex-[0_1_auto] min-h-0 lg:flex-1 min-w-0 w-full flex flex-col"
                                 : "order-1 w-full lg:w-[560px] lg:flex-none flex flex-col items-center gap-5"
                         }
                     >
-                        <div className={drawing ? "flex-1 min-w-0 w-full flex" : "relative w-full"}>
+                        <div className={drawing ? "flex-[0_1_auto] min-h-0 lg:flex-1 min-w-0 w-full flex flex-col" : "relative w-full"}>
                             <DrawingBoard key={`${game.currentDrawerId}-${game.round}`} isDrawer={scoring ? false : isDrawer} socket={socket} fill={drawing} />
 
                             {scoring && (
@@ -199,11 +207,13 @@ export default function GameScreen({ room, myPlayerId, onChooseWord, socket, onL
                         <Chat
                             key="chat"
                             variant="fill"
+                            className="stage-chat"
                             title="the murmurings"
                             messages={messages}
                             onSend={onSend}
                             players={room.players}
                             inputDisabled={isDrawer}
+                            placeholder={divined ? "divined! murmur, but keep it secret…" : "guess the spell…"}
                         />
                     ) : (
                         <PayoutPanel key="payout" game={game} players={room.players} />

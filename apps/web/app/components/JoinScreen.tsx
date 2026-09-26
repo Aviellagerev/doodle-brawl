@@ -2,14 +2,14 @@
 
 import { useState, useSyncExternalStore } from "react";
 import Avatar from "./Avatar";
-import { Night, Starfield, Card, Tape, Eyebrow, InkEyebrow, Btn, Btn2, Ghost, DashDivider } from "./ui/Bits";
+import { Night, Starfield, Card, Tape, Eyebrow, InkEyebrow, Btn, Ghost, DashDivider } from "./ui/Bits";
 import { Wordmark } from "./ui/Logo";
 import CandleOrnament from "./ui/CandleOrnament";
 import { subscribeMyAvatar, getMyAvatar, getServerAvatar, rerollMyAvatar } from "../lib/myAvatar";
 import type { PublicUser } from "../../../../packages/shared";
 
 type JoinScreenProps = {
-  onCreate: (name: string, emphasizeCode?: boolean) => void;
+  onCreate: (name: string) => void;
   onJoin: (name: string, code: string) => void;
   playerCount?: number | null;
   joinError?: string | null;
@@ -28,16 +28,23 @@ export default function JoinScreen({ onCreate, onJoin, playerCount, joinError, i
   const mine = useSyncExternalStore(subscribeMyAvatar, getMyAvatar, getServerAvatar);   // rolled once, kept until rerolled
   const [showHelp, setShowHelp] = useState(false);
   const [nameError, setNameError] = useState(false);
+  const [codeError, setCodeError] = useState(false);
 
   const requireName = () => {
     if (!name.trim()) { setNameError(true); return false; }
     return true;
   };
-  // both doors make a room — the private one lands in the lobby with the code
-  // emphasised, which is the only difference the handoff draws between them
-  const tryQuick = () => { if (requireName()) onCreate(name); };
-  const tryPrivate = () => { if (requireName()) onCreate(name, true); };
-  const tryJoin = () => { if (requireName()) onJoin(name, code); };
+  // Two doors, one job each: summon a circle of your own, or walk into
+  // someone else's by its word. (The handoff's CAST ME IN was quick-play into a
+  // public room; with no public rooms it only duplicated the summon, so it
+  // moved beside the code it now opens.)
+  const trySummon = () => { if (requireName()) onCreate(name); };
+  const tryJoin = () => {
+    const named = requireName();
+    const worded = code.trim().length > 0;
+    setCodeError(!worded);
+    if (named && worded) onJoin(name, code.trim());
+  };
   const invite = !!inviteCode;
   const tryInviteJoin = () => { if (inviteCode && requireName()) onJoin(name, inviteCode); };
 
@@ -168,22 +175,24 @@ export default function JoinScreen({ onCreate, onJoin, playerCount, joinError, i
               </div>
             </div>
 
-            {joinError && (
-              <p className="m-0 mb-4" style={{ fontWeight: 600, fontSize: 12, color: "var(--red)" }}>{joinError}</p>
-            )}
-
             {invite ? (
-              <Btn tone="magenta" className="w-full" size={24} radius="34px 30px 34px 28px" onClick={tryInviteJoin}>
-                CAST ME IN ✦
-              </Btn>
-            ) : (
               <>
-                <Btn tone="magenta" className="w-full" size={26} radius="34px 30px 34px 28px" style={{ minHeight: 62 }} onClick={tryQuick}>
+                {joinError && (
+                  <p className="m-0 mb-4" style={{ fontWeight: 600, fontSize: 12, color: "var(--red)" }}>{joinError}</p>
+                )}
+                <Btn tone="magenta" className="w-full" size={24} radius="34px 30px 34px 28px" onClick={tryInviteJoin}>
                   CAST ME IN ✦
                 </Btn>
-                <Btn2 className="w-full mt-3" size={16} radius="30px 34px 28px 32px" onClick={tryPrivate}>
-                  summon a private circle
-                </Btn2>
+              </>
+            ) : (
+              <>
+                {/* one line even on a 360px phone */}
+                <Btn tone="magenta" className="w-full" size={26} radius="34px 30px 34px 28px" style={{ minHeight: 62, fontSize: "clamp(18px, 5.7vw, 26px)" }} onClick={trySummon}>
+                  SUMMON A CIRCLE ✦
+                </Btn>
+                <p className="m-0 mt-2.5 text-center" style={{ fontWeight: 600, fontSize: 12, color: "rgba(58,47,38,.5)" }}>
+                  your own circle, and a word to share
+                </p>
 
                 <div className="my-5">
                   <DashDivider label="or speak the word" night={false} />
@@ -192,23 +201,40 @@ export default function JoinScreen({ onCreate, onJoin, playerCount, joinError, i
                 <div className="flex gap-2.5 items-stretch">
                   <input
                     value={code}
-                    onChange={(e) => setCode(e.target.value.toUpperCase())}
+                    onChange={(e) => { setCode(e.target.value.toUpperCase()); if (codeError) setCodeError(false); }}
                     onKeyDown={(e) => { if (e.key === "Enter") tryJoin(); }}
                     placeholder="ᛗ Ø R B — 4 2"
+                    aria-label="the circle's word"
+                    // a room code, not prose: no capitals fight, no autocorrect
+                    autoCapitalize="characters"
+                    autoCorrect="off"
+                    autoComplete="off"
+                    spellCheck={false}
+                    enterKeyHint="go"
                     className="field-box flex-1 min-w-0"
-                    style={{ fontSize: "clamp(14px, 4.2vw, 17px)", letterSpacing: ".14em", minHeight: 52 }}
+                    // never under 16px: iOS zooms into any smaller field
+                    style={{
+                      fontSize: "clamp(16px, 4.2vw, 17px)", letterSpacing: ".14em", minHeight: 52,
+                      ...(codeError || joinError ? { borderColor: "var(--red)" } : {}),
+                    }}
                     dir="auto"
                   />
                   <Btn
                     tone="teal"
-                    size={20}
+                    size={18}
                     radius="16px 20px 14px 18px"
                     onClick={tryJoin}
-                    style={{ minHeight: 52, padding: "0 20px", boxShadow: "3px 3px 0 var(--ink-warm)" }}
+                    style={{ minHeight: 52, padding: "0 15px", boxShadow: "3px 3px 0 var(--ink-warm)", whiteSpace: "nowrap" }}
                   >
-                    GO
+                    CAST ME IN
                   </Btn>
                 </div>
+                {/* a bounced join reads on the field itself */}
+                {(codeError || joinError) && (
+                  <p className="m-0 mt-2" style={{ fontWeight: 600, fontSize: 11.5, color: "var(--red)" }}>
+                    {codeError ? "speak a circle's word first" : joinError}
+                  </p>
+                )}
               </>
             )}
           </Card>
@@ -227,13 +253,19 @@ export default function JoinScreen({ onCreate, onJoin, playerCount, joinError, i
               </button>
             </div>
           )}
+
+          {/* a phone has no corners to spare: here the rules are a button of
+              their own, centred under everything else */}
+          <div className="lg:hidden flex justify-center mt-6">
+            <Ghost onClick={() => setShowHelp(true)}>the rules of the rite</Ghost>
+          </div>
         </div>
       </div>
 
-      {/* the corners: what the guild remembers, and what it is burning */}
+      {/* the corners (wide screens): what the guild remembers, and what it is burning */}
       <button
         onClick={() => setShowHelp(true)}
-        className="absolute z-10 cursor-pointer"
+        className="absolute z-10 cursor-pointer hidden lg:block"
         style={{ left: 22, bottom: 26, background: "transparent", border: 0, fontWeight: 600, fontSize: 12.5, color: "rgba(242,227,191,.5)" }}
       >
         the rules of the rite

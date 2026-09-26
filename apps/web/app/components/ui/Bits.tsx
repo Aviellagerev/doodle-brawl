@@ -1,4 +1,5 @@
 "use client";
+import { useEffect, useState } from "react";
 import type { CSSProperties, ReactNode, ButtonHTMLAttributes } from "react";
 
 /** Recurring pieces of the Scrawl & Sorcery kit. */
@@ -7,7 +8,10 @@ type Div = { children?: ReactNode; className?: string; style?: CSSProperties };
 
 /* ── Grounds ───────────────────────────────────────────────────────────────── */
 
-/** A full-height night ground. Each screen places its own candle glow. */
+/**
+ * A night ground. Each screen places its own candle glow. It is at least a
+ * screen tall unless `screen` is off — the game stage sets its own height.
+ */
 export function Night({
   children,
   glow = "rgba(255,214,140,.13)",
@@ -16,12 +20,13 @@ export function Night({
   bloom,
   bloomX = "82%",
   bloomY = "74%",
+  screen = true,
   className = "",
   style,
-}: Div & { glow?: string; x?: string; y?: string; bloom?: string; bloomX?: string; bloomY?: string }) {
+}: Div & { glow?: string; x?: string; y?: string; bloom?: string; bloomX?: string; bloomY?: string; screen?: boolean }) {
   return (
     <div
-      className={`night min-h-screen ${className}`}
+      className={`night ${screen ? "min-h-screen" : ""} ${className}`}
       style={{
         ["--glow" as string]: glow,
         ["--glow-x" as string]: x,
@@ -192,6 +197,98 @@ export function Ghost({
 }: ButtonHTMLAttributes<HTMLButtonElement> & { size?: number }) {
   return (
     <button {...rest} className={`ghost ${className}`} style={{ minHeight: 44, padding: "0 14px", fontSize: size, ...style }}>
+      {children}
+    </button>
+  );
+}
+
+/**
+ * The way out. Mid-rite it asks once — "truly?" — so a stray thumb near the
+ * corner of a phone cannot drop anyone out of a game.
+ */
+export function LeaveGhost({ onLeave, confirm = false, className = "", style }: {
+  onLeave: () => void;
+  confirm?: boolean;
+  className?: string;
+  style?: CSSProperties;
+}) {
+  const [asking, setAsking] = useState(false);
+
+  useEffect(() => {
+    if (!asking) return;
+    const id = setTimeout(() => setAsking(false), 3000);
+    return () => clearTimeout(id);
+  }, [asking]);
+
+  return (
+    <Ghost
+      onClick={() => (confirm && !asking ? setAsking(true) : onLeave())}
+      title="leave the circle"
+      className={className}
+      style={{ ...(asking ? { borderColor: "var(--magenta)", color: "var(--magenta)" } : {}), ...style }}
+    >
+      {asking ? "truly?" : "leave"}
+    </Ghost>
+  );
+}
+
+/**
+ * One tag of a pick-several setting (the grimoires): ticked and filled when it
+ * is in, a dashed outline when it is left out. Unlike Seg, any number may be on.
+ */
+export function PickTag({ on, onClick, disabled, children }: {
+  on: boolean;
+  onClick?: () => void;
+  disabled?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={on}
+      disabled={disabled}
+      onClick={onClick}
+      className="inline-flex items-center gap-1.5 flex-none"
+      style={{
+        minHeight: 36,
+        padding: "0 9px 0 6px",
+        borderRadius: "12px 10px 13px 11px",
+        fontFamily: "var(--font-loud)",
+        fontWeight: 800,
+        fontSize: 12.5,
+        cursor: disabled ? "default" : "pointer",
+        ...(on
+          ? {
+              border: "2.5px solid var(--ink-warm)",
+              background: "var(--teal)",
+              color: "var(--ink-warm)",
+              boxShadow: "2px 2px 0 var(--ink-warm)",
+            }
+          : {
+              border: "2px dashed rgba(58,47,38,.35)",
+              background: "transparent",
+              color: "rgba(58,47,38,.5)",
+            }),
+      }}
+    >
+      <span
+        aria-hidden
+        className="grid place-items-center flex-none"
+        style={{
+          width: 15,
+          height: 15,
+          borderRadius: 5,
+          fontSize: 11,
+          lineHeight: 1,
+          fontWeight: 900,
+          ...(on
+            ? { border: "2px solid var(--ink-warm)", background: "var(--parchment-bright)", color: "var(--ink-warm)" }
+            : { border: "2px solid rgba(58,47,38,.28)" }),
+        }}
+      >
+        {on ? "✓" : ""}
+      </span>
       {children}
     </button>
   );

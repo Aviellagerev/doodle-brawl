@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Socket } from "socket.io-client";
 import { DrawSegment, DrawOp, DrawEntry } from "../../../../../packages/shared";
 
@@ -7,29 +7,40 @@ type Props = { isDrawer: boolean; socket: Socket | null; fill?: boolean };
 
 type Tool = "pencil" | "eraser" | "line" | "rect" | "ellipse" | "fill";
 
-const PALETTE = [
-    // row 1 — brights
-    "#3a2f26", "#8a8178", "#fffdf7",
-    "oklch(0.55 0.19 20)", "oklch(0.68 0.16 35)", "oklch(0.82 0.15 85)",
-    "oklch(0.75 0.14 110)", "oklch(0.55 0.13 155)", "oklch(0.68 0.13 200)",
-    "oklch(0.50 0.16 265)", "oklch(0.60 0.16 315)",
-    // row 2 — muted + deep (from the concept sheet)
-    "#5c5349", "#c4bcb0", "oklch(0.40 0.14 25)",
-    "oklch(0.72 0.19 20)", "oklch(0.80 0.13 45)", "oklch(0.90 0.13 95)",
-    "oklch(0.60 0.15 135)", "oklch(0.42 0.10 175)", "oklch(0.50 0.14 230)",
-    "oklch(0.65 0.14 290)", "oklch(0.75 0.13 340)",
+// The guild's inks. The reference's toolbar holds six, all the app's own
+// colour tokens (ink, magenta, teal, moss, gold, vellum); the other six are
+// mixed from the same family — the design's red and violet, and a flame, a
+// stone, an earth and a robe blue at the same strength — so there is still
+// something to draw fire, rock, trees and water with.
+const PALETTE: { name: string; ink: string }[] = [
+    // row 1
+    { name: "ink", ink: "#2b1c12" },   // the pen colour
+    { name: "red", ink: "oklch(0.55 0.19 25)" },
+    { name: "flame", ink: "oklch(0.7 0.17 50)" },
+    { name: "gold", ink: "oklch(0.72 0.16 80)" },
+    { name: "moss", ink: "oklch(0.75 0.15 140)" },
+    { name: "teal", ink: "oklch(0.7 0.14 190)" },
+    // row 2
+    { name: "vellum", ink: "#fffaeb" },
+    { name: "stone", ink: "oklch(0.64 0.02 75)" },
+    { name: "earth", ink: "oklch(0.5 0.08 55)" },
+    { name: "magenta", ink: "oklch(0.65 0.2 350)" },
+    { name: "violet", ink: "oklch(0.7 0.15 315)" },
+    { name: "robe blue", ink: "oklch(0.52 0.13 262)" },
 ];
 const SIZES = [4, 8, 14, 22];
 // how big each nib reads in the toolbar (the reference uses 9 / 15 / 23)
 const NIB_DOT = [9, 13, 18, 23];
 
-const TOOLS: { id: Tool; glyph: string; title: string }[] = [
-    { id: "pencil", glyph: "✎", title: "Brush" },
-    { id: "line", glyph: "▬", title: "Line" },
-    { id: "rect", glyph: "◻", title: "Rectangle" },
-    { id: "ellipse", glyph: "◯", title: "Ellipse" },
-    { id: "fill", glyph: "▨", title: "Fill" },
-    { id: "eraser", glyph: "⌫", title: "Eraser" },
+// The implements are drawn, not borrowed from a font: some phones turn a font's
+// ◻ and ◯ into emoji, and no glyph ever said "fill" or "eraser" plainly.
+const TOOLS: { id: Tool; title: string; icon: ReactNode }[] = [
+    { id: "pencil", title: "Brush", icon: <><path d="M4 20l1.2-4.6L15.6 5a2 2 0 0 1 2.8 0l.6.6a2 2 0 0 1 0 2.8L8.6 18.8z" /><path d="M13.6 7l3.4 3.4" /></> },
+    { id: "line", title: "Line", icon: <path d="M5 19L19 5" /> },
+    { id: "rect", title: "Rectangle", icon: <rect x="4" y="6" width="16" height="12" rx="1.5" /> },
+    { id: "ellipse", title: "Ellipse", icon: <ellipse cx="12" cy="12" rx="8.5" ry="6.5" /> },
+    { id: "fill", title: "Fill", icon: <><path d="M4 11.5L10.5 5l7 7L11 18.5z" /><path d="M4 11.5h13.5" /><path d="M20 14.5c1 1.4 1.6 2.4 1.6 3.2a1.6 1.6 0 0 1-3.2 0c0-.8.6-1.8 1.6-3.2z" fill="currentColor" /></> },
+    { id: "eraser", title: "Eraser", icon: <><path d="M8.5 19.5H20" /><path d="M4.4 14.8l8.8-8.8a2 2 0 0 1 2.8 0l2.4 2.4a2 2 0 0 1 0 2.8l-8.2 8.3H8.4z" /><path d="M9.2 10l5.4 5.4" /></> },
 ];
 
 // draw one segment; `erase` clears (destination-out) instead of painting so the
@@ -125,8 +136,11 @@ export default function DrawingBoard({ isDrawer, socket, fill = false }: Props) 
     const strokeIdRef = useRef(0);
     // keep the live tool available inside pointer handlers without re-binding
     const toolRef = useRef<Tool>("pencil");
+    // the one finger (or pen, or mouse) drawing right now — a second touch, a
+    // resting palm, is ignored rather than yanking the stroke across the vellum
+    const pointerRef = useRef<number | null>(null);
 
-    const [color, setColor] = useState(PALETTE[0]);
+    const [color, setColor] = useState(PALETTE[0].ink);
     const [width, setWidth] = useState(SIZES[1]);
     const [tool, setTool] = useState<Tool>("pencil");
     const [canUndo, setCanUndo] = useState(false);
@@ -137,10 +151,11 @@ export default function DrawingBoard({ isDrawer, socket, fill = false }: Props) 
     function getPoint(e: React.PointerEvent<HTMLCanvasElement>) {
         const canvas = canvasRef.current;
         if (!canvas) return null;
+        // measured inside the ink border, which is not part of the drawing
         const rect = canvas.getBoundingClientRect();
         return {
-            x: ((e.clientX - rect.left) / rect.width) * canvas.width,
-            y: ((e.clientY - rect.top) / rect.height) * canvas.height,
+            x: ((e.clientX - rect.left - canvas.clientLeft) / canvas.clientWidth) * canvas.width,
+            y: ((e.clientY - rect.top - canvas.clientTop) / canvas.clientHeight) * canvas.height,
         };
     }
 
@@ -225,6 +240,7 @@ export default function DrawingBoard({ isDrawer, socket, fill = false }: Props) 
 
     function handlePointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
         if (!isDrawer) return;
+        if (pointerRef.current !== null) return;   // already drawing with another finger
         const canvas = canvasRef.current;
         const p = getPoint(e);
         if (!canvas || !p) return;
@@ -242,6 +258,10 @@ export default function DrawingBoard({ isDrawer, socket, fill = false }: Props) 
             socket?.emit("draw_op", op);
             return;
         }
+        // follow this pointer even if it strays off the edge and back
+        pointerRef.current = e.pointerId;
+        canvas.setPointerCapture(e.pointerId);
+
         if (t === "line" || t === "rect" || t === "ellipse") {
             drawingRef.current = true;
             shapeStartRef.current = p;
@@ -253,7 +273,7 @@ export default function DrawingBoard({ isDrawer, socket, fill = false }: Props) 
     }
 
     function handlePointerMove(e: React.PointerEvent<HTMLCanvasElement>) {
-        if (!drawingRef.current) return;
+        if (!drawingRef.current || e.pointerId !== pointerRef.current) return;
         const canvas = canvasRef.current;
         const p = getPoint(e);
         if (!canvas || !p) return;
@@ -287,12 +307,14 @@ export default function DrawingBoard({ isDrawer, socket, fill = false }: Props) 
         lastRef.current = p;
     }
 
-    function handlePointerUp(e?: React.PointerEvent<HTMLCanvasElement>) {
+    function handlePointerUp(e: React.PointerEvent<HTMLCanvasElement>) {
+        if (e.pointerId !== pointerRef.current) return;
+        pointerRef.current = null;
         const t = toolRef.current;
         if (drawingRef.current && (t === "line" || t === "rect" || t === "ellipse")) {
             const canvas = canvasRef.current;
             const s = shapeStartRef.current;
-            const p = e ? getPoint(e) : null;
+            const p = e.type === "pointerup" ? getPoint(e) : null;   // a cancelled shape is dropped
             if (canvas && s && p) {
                 const op: DrawOp = {
                     kind: t,
@@ -375,51 +397,63 @@ export default function DrawingBoard({ isDrawer, socket, fill = false }: Props) 
     }, [isDrawer]);
 
     return (
-        <div className="flex-1 min-w-0 flex flex-col gap-3">
-            {/* the scrying vellum */}
-            <div className={`relative w-full ${fill ? "lg:flex-1 lg:min-h-0" : ""}`}>
-                <canvas
-                    ref={canvasRef}
-                    width={800}
-                    height={600}
-                    onPointerDown={handlePointerDown}
-                    onPointerMove={handlePointerMove}
-                    onPointerUp={handlePointerUp}
-                    onPointerLeave={handlePointerUp}
-                    className={`w-full block touch-none h-[300px] sm:h-[400px] ${fill ? "lg:h-full" : "lg:h-[460px]"}`}
-                    style={{
-                        background: "var(--parchment-bright)",
-                        backgroundImage: "repeating-linear-gradient(118deg, rgba(120,95,60,.05) 0 2px, transparent 2px 8px)",
-                        border: "3px solid var(--ink-warm)",
-                        borderRadius: 10,
-                        boxShadow: "5px 6px 0 rgba(0,0,0,.45)",
-                        cursor: isDrawer ? "crosshair" : "default",
-                    }}
-                />
-                <span aria-hidden className="absolute pointer-events-none" style={{ inset: 11, border: "2px dashed rgba(58,47,38,.16)", borderRadius: 6 }} />
-                <span aria-hidden className="absolute eyebrow pointer-events-none" style={{ top: 14, left: 18, fontSize: 10, letterSpacing: ".2em", color: "rgba(58,47,38,.3)" }}>
-                    scrying vellum
-                </span>
+        // in the game stage (fill) the board gives up height before the
+        // murmurings do; elsewhere it is simply as tall as its width allows
+        <div className={`min-w-0 flex flex-col gap-2 sm:gap-3 ${fill ? "flex-[0_1_auto] min-h-0 lg:flex-1" : "flex-1"}`}>
+            {/* the scrying vellum — always the canvas's own 4:3, as large as fits;
+                in the stage it starts at full width and gives up height first */}
+            <div className={`vellum-box w-full aspect-[4/3] ${fill ? "flex-[0_1_auto]" : ""}`}>
+                <div className="vellum">
+                    <canvas
+                        ref={canvasRef}
+                        width={800}
+                        height={600}
+                        onPointerDown={handlePointerDown}
+                        onPointerMove={handlePointerMove}
+                        onPointerUp={handlePointerUp}
+                        onPointerCancel={handlePointerUp}
+                        // only the caster's vellum swallows touches; for everyone
+                        // else a swipe that starts on it still scrolls the page
+                        className={`block w-full h-full ${isDrawer ? "touch-none" : ""}`}
+                        style={{
+                            background: "var(--parchment-bright)",
+                            backgroundImage: "repeating-linear-gradient(118deg, rgba(120,95,60,.05) 0 2px, transparent 2px 8px)",
+                            border: "3px solid var(--ink-warm)",
+                            borderRadius: 10,
+                            boxShadow: "5px 6px 0 rgba(0,0,0,.45)",
+                            cursor: isDrawer ? "crosshair" : "default",
+                        }}
+                    />
+                    <span aria-hidden className="absolute pointer-events-none" style={{ inset: 11, border: "2px dashed rgba(58,47,38,.16)", borderRadius: 6 }} />
+                    <span aria-hidden className="absolute eyebrow pointer-events-none" style={{ top: 14, left: 18, fontSize: 10, letterSpacing: ".2em", color: "rgba(58,47,38,.3)" }}>
+                        scrying vellum
+                    </span>
+                </div>
             </div>
 
             {isDrawer && (
-                <div className="flex items-center flex-wrap gap-2" style={{ background: "var(--ink-warm)", borderRadius: 13, padding: "9px 11px" }}>
+                // phones: two rows of six pigments spread across the bar, then the
+                // implements, then nib + undo + banish · wide screens: one wrapping
+                // row, as designed
+                <div className="flex-none flex items-center flex-wrap gap-2" style={{ background: "var(--ink-warm)", borderRadius: 13, padding: "9px 10px" }}>
                     {/* pigments */}
                     <div
-                        className="grid"
-                        style={{ gridTemplateColumns: "repeat(11, 26px)", gridAutoRows: 26, gap: 7, paddingRight: 10, borderRight: "2px dashed rgba(242,227,191,.25)" }}
+                        className="grid w-full grid-cols-6 gap-2 lg:w-auto lg:grid-cols-[repeat(6,26px)] lg:auto-rows-[26px] lg:gap-[7px] lg:pr-2.5 lg:border-r-2 lg:border-dashed"
+                        style={{ borderColor: "rgba(242,227,191,.25)" }}
                     >
-                        {PALETTE.map((c) => {
-                            const active = color === c && tool !== "eraser";
+                        {PALETTE.map(({ name, ink }) => {
+                            const active = color === ink && tool !== "eraser";
                             return (
                                 <button
-                                    key={c}
-                                    onClick={() => { setColor(c); if (tool === "eraser") setTool("pencil"); }}
-                                    aria-label={`pigment ${c}`}
-                                    className="cursor-pointer"
+                                    key={ink}
+                                    onClick={() => { setColor(ink); if (tool === "eraser") setTool("pencil"); }}
+                                    title={name}
+                                    aria-label={`${name} ink`}
+                                    aria-pressed={active}
+                                    className="cursor-pointer aspect-square w-full max-w-[30px] justify-self-center"
                                     style={{
                                         borderRadius: "50%",
-                                        background: c,
+                                        background: ink,
                                         boxShadow: active
                                             ? "0 0 0 2px var(--parchment), 0 0 0 4px var(--gold)"
                                             : "0 0 0 2px rgba(242,227,191,.35)",
@@ -430,7 +464,7 @@ export default function DrawingBoard({ isDrawer, socket, fill = false }: Props) 
                     </div>
 
                     {/* implements */}
-                    <div className="flex items-center flex-wrap" style={{ gap: 7, paddingRight: 10, borderRight: "2px dashed rgba(242,227,191,.25)" }}>
+                    <div className="flex items-center gap-1.5 lg:gap-[7px] lg:pr-2.5 lg:border-r-2 lg:border-dashed" style={{ borderColor: "rgba(242,227,191,.25)" }}>
                         {TOOLS.map((tl) => {
                             const active = tool === tl.id;
                             return (
@@ -438,28 +472,32 @@ export default function DrawingBoard({ isDrawer, socket, fill = false }: Props) 
                                     key={tl.id}
                                     onClick={() => setTool(tl.id)}
                                     title={tl.title}
-                                    className="grid place-items-center cursor-pointer w-11 h-11 lg:w-[34px] lg:h-[34px]"
+                                    aria-label={tl.title}
+                                    aria-pressed={active}
+                                    className="grid place-items-center cursor-pointer w-10 h-10 lg:w-[34px] lg:h-[34px]"
                                     style={{
                                         borderRadius: 10,
-                                        fontSize: 15,
                                         border: active ? "2px solid var(--parchment)" : "2px solid transparent",
                                         background: active ? "var(--gold)" : "rgba(242,227,191,.12)",
                                         color: active ? "var(--ink-warm)" : "var(--parchment)",
                                     }}
                                 >
-                                    {tl.glyph}
+                                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                                        {tl.icon}
+                                    </svg>
                                 </button>
                             );
                         })}
                     </div>
 
                     {/* nib */}
-                    <div className="flex items-center" style={{ gap: 7 }}>
+                    <div className="flex items-center" style={{ gap: 6 }}>
                         {SIZES.map((sz, si) => (
                             <button
                                 key={sz}
                                 onClick={() => setWidth(sz)}
                                 aria-label={`nib ${sz}`}
+                                aria-pressed={width === sz}
                                 className="grid place-items-center cursor-pointer"
                                 style={{ width: 30, height: 30 }}
                             >
