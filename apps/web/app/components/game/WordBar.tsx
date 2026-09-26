@@ -3,15 +3,17 @@ import { Fragment } from "react";
 import { GamePhase } from "../../../../../packages/shared";
 import { CandleTimer } from "../ui/Candle";
 import { Wordmark } from "../ui/Logo";
-import { Ghost, InkEyebrow } from "../ui/Bits";
+import { LeaveGhost, InkEyebrow } from "../ui/Bits";
 
 
 type Props = {
     phase: GamePhase;
     isDrawer: boolean;
-    word: string | null;
+    divined: boolean;        // this diviner has already guessed it
+    word: string | null;     // only sent to those allowed to know it
     wordLength: number | null;
     hint: string[] | null;   // per-letter reveal for diviners ("" hidden, " " space, else letter)
+    wordDir: "ltr" | "rtl" | null;   // which way the spell reads
     round: number;
     totalRounds: number;
     drawerName: string;
@@ -24,10 +26,13 @@ type Props = {
  * The masked word plaque and the candle.
  * The word is rendered as one span per word with a rule between them — never a
  * single string, or the gap between words disappears under the letter-spacing.
+ * It is laid out in the spell's own direction: a Hebrew spell's first word sits
+ * on the right, and so does its first letter once a hint uncovers it — blanks
+ * alone carry no direction for the browser to find.
  */
-function MaskedWord({ groups, size }: { groups: string[]; size: string | number }) {
+function MaskedWord({ groups, size, dir }: { groups: string[]; size: string | number; dir: "ltr" | "rtl" | null }) {
     return (
-        <div className="flex items-center justify-center gap-2 sm:gap-3 flex-wrap">
+        <div dir={dir ?? "auto"} className="flex items-center justify-center gap-2 sm:gap-3 flex-wrap">
             {groups.map((g, i) => (
                 <Fragment key={i}>
                     {i > 0 && <span className="flex-none w-4 sm:w-[22px]" style={{ height: 3, background: "rgba(58,47,38,.3)", borderRadius: 2 }} />}
@@ -40,35 +45,44 @@ function MaskedWord({ groups, size }: { groups: string[]; size: string | number 
     );
 }
 
-// "haunted kettle" → ["H A U N T E D", "K E T T L E"]; hidden letters read as _
+const DASH = /\p{Pd}/u;
+const LETTER = /[\p{L}\p{N}]/u;
+
+// "haunted kettle" → ["H A U N T E D", "K E T T L E"]; hidden letters read as _.
+// A spelled-out word keeps the shape of the blanks (the server's hintForm): a
+// hyphen parts words like a space, and an apostrophe rides on the letter before
+// it — ג' י ר פ ה — so the caster sees as many letters as the rest see blanks.
 function groupsOf(word: string | null, hint: string[] | null, wordLength: number | null): string[] {
     const cells = word
-        ? word.toUpperCase().split("")
+        ? [...word.toUpperCase()]
         : hint ?? Array.from({ length: wordLength ?? 0 }, () => "");
     const out: string[] = [];
     let cur: string[] = [];
     for (const ch of cells) {
-        if (ch === " ") { out.push(cur.join(" ")); cur = []; }
+        if (ch === " " || DASH.test(ch)) { out.push(cur.join(" ")); cur = []; }
+        else if (ch && !LETTER.test(ch) && cur.length) cur[cur.length - 1] += ch;
         else cur.push(ch === "" ? "_" : ch.toUpperCase());
     }
     if (cur.length) out.push(cur.join(" "));
     return out.filter(Boolean);
 }
 
-export default function WordBar({ phase, isDrawer, word, wordLength, hint, round, totalRounds, drawerName, endsAt, totalMs, onLeave }: Props) {
-    const groups = groupsOf(phase === "scoring" ? word : isDrawer ? word : null, hint, wordLength);
+export default function WordBar({ phase, isDrawer, divined, word, wordLength, hint, wordDir, round, totalRounds, drawerName, endsAt, totalMs, onLeave }: Props) {
+    // the server sends the word only to whoever may see it: the caster, a
+    // diviner who has already guessed it, and everyone once it is spent
+    const groups = groupsOf(word, hint, wordLength);
     const label =
         phase === "scoring" ? "the spell was" :
             isDrawer ? "casting" :
-                `${drawerName} is casting`;
+                divined && word ? "divined ✦" :
+                    `${drawerName} is casting`;
 
     return (
-        <div className="flex items-center gap-3 lg:gap-4">
-            {/* left — a back button on phones; the mark and the round on wide screens */}
-            <Ghost onClick={onLeave} title="leave the circle" className="sm:hidden" style={{ width: 44, minWidth: 44, padding: 0, fontSize: 17 }}>
-                ←
-            </Ghost>
-            <div className="hidden sm:flex items-center gap-3.5 flex-none">
+        <div className="flex items-center gap-2.5 sm:gap-3 lg:gap-4">
+            {/* left — the way out on phones; the mark and the round on wide
+                screens, unless the stage is short (a phone on its side) */}
+            <LeaveGhost onLeave={onLeave} confirm className="sm:hidden flex-none" style={{ padding: "0 11px" }} />
+            <div className="when-roomy hidden sm:flex items-center gap-3.5 flex-none">
                 <Wordmark size={22} onNight inline />
                 <span
                     className="eyebrow flex-none whitespace-nowrap"
@@ -92,9 +106,14 @@ export default function WordBar({ phase, isDrawer, word, wordLength, hint, round
                             boxShadow: "4px 4px 0 rgba(0,0,0,.42)",
                         }}
                     >
-                        <InkEyebrow dim={0.45} size={8.5} style={{ letterSpacing: ".18em", textAlign: "center" }}>{label}</InkEyebrow>
+                        <InkEyebrow dim={0.45} size={8.5} className="truncate" style={{ letterSpacing: ".18em", textAlign: "center" }}>
+                            {/* wherever the round chip is not on show, the plaque carries the round */}
+                            <span className="plaque-round">{round}/{totalRounds} · </span>{label}
+                        </InkEyebrow>
                         <div className="mt-1.5">
-                            <MaskedWord groups={groups} size="clamp(13px, 3.6vw, 21px)" />
+                            {/* sized by the width, but never so large that a phone
+                                on its side spends its little height on the plaque */}
+                            <MaskedWord groups={groups} dir={wordDir} size="clamp(13px, min(3.6vw, 4.6cqh), 21px)" />
                         </div>
                     </div>
                 ) : (
@@ -111,9 +130,7 @@ export default function WordBar({ phase, isDrawer, word, wordLength, hint, round
             <div className="flex items-center gap-2.5 lg:gap-3.5 flex-none">
                 <span className="lg:hidden"><CandleTimer endsAt={endsAt} totalMs={totalMs} w={16} h={34} numeral={22} /></span>
                 <span className="hidden lg:inline-flex"><CandleTimer endsAt={endsAt} totalMs={totalMs} w={20} h={44} numeral={28} /></span>
-                <Ghost onClick={onLeave} title="leave the circle" className="hidden sm:inline-grid" style={{ minWidth: 44, padding: "0 12px" }}>
-                    leave
-                </Ghost>
+                <LeaveGhost onLeave={onLeave} confirm className="hidden sm:inline-block" />
             </div>
         </div>
     );

@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Grenze_Gotisch, Shantell_Sans, Quicksand } from "next/font/google";
 import "./globals.css";
 
@@ -15,6 +15,16 @@ const quicksand = Quicksand({ variable: "--font-quicksand", subsets: ["latin"] }
 export const metadata: Metadata = {
   title: "Scrawl & Sorcery",
   description: "A duel of incompetent wizards. Cast badly, divine loudly, ascend anyway.",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  // Android: a keyboard shrinks the layout, not just what is visible, so the
+  // stage re-fits above the keys. iOS ignores this; useVisualViewport covers it.
+  interactiveWidget: "resizes-content",
+  // the browser's own bars in the night sky's colour
+  themeColor: "#170d29",
 };
 
 export default function RootLayout({
