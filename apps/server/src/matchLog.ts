@@ -1,6 +1,7 @@
 import {
   RoomState, GameState, Player, RoomSettings, DrawEntry, Difficulty, ChatEntry,
 } from "../../../packages/shared/index.js";
+import { spellKey } from "./game/skribbl.js";
 
 export interface GuessLog {
   playerId: string;
@@ -76,6 +77,15 @@ export function startTurn(roomId: string, game: GameState): void {
     guesses: [],
     replay: [],
   });
+}
+
+/**
+ * The spells drawn so far this rite, as spellKeys — so no offering repeats
+ * one. Kept here rather than on the room: the room is broadcast, and this list
+ * would name the spell being drawn right now.
+ */
+export function drawnWords(roomId: string): Set<string> {
+  return new Set((matchLogs.get(roomId)?.turns ?? []).map((t) => spellKey(t.word)));
 }
 
 export function logGuess(

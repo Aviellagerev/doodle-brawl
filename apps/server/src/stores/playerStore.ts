@@ -64,16 +64,25 @@ export async function findPlayerForUser(userId: string): Promise<PlayerRow | nul
  *
  * A guest row is created the moment somebody joins a circle, and most of them
  * never come back. This removes the ones that are provably worthless: no
- * account, no match ever recorded, and old enough that they cannot be mid-rite.
+ * account, no trace in any match, and old enough that they cannot be mid-rite.
  * Accounts and anyone with history are never touched, and sessions go with them
  * through ON DELETE CASCADE.
+ *
+ * "No trace" means every table that points at a player, not just the final
+ * standings: someone who drew a turn, sat through one or spoke in it and then
+ * left before the end is in match_turns / turn_guesses / match_chat but not in
+ * match_participants. Checking only the standings made the delete hit their
+ * foreign keys — and since it is one statement, the whole sweep failed.
  */
 export async function pruneIdleGuests(olderThanDays = 30): Promise<number> {
   const r = await pool.query(
     `DELETE FROM players p
       WHERE p.user_id IS NULL
         AND p.created_at < now() - ($1 || ' days')::interval
-        AND NOT EXISTS (SELECT 1 FROM match_participants mp WHERE mp.player_id = p.id)`,
+        AND NOT EXISTS (SELECT 1 FROM match_participants mp WHERE mp.player_id = p.id)
+        AND NOT EXISTS (SELECT 1 FROM match_turns mt WHERE mt.drawer_id = p.id)
+        AND NOT EXISTS (SELECT 1 FROM turn_guesses tg WHERE tg.player_id = p.id)
+        AND NOT EXISTS (SELECT 1 FROM match_chat mc WHERE mc.player_id = p.id)`,
     [String(olderThanDays)],
   );
   return r.rowCount ?? 0;

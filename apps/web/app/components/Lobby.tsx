@@ -1,13 +1,13 @@
 "use client";
-import { useEffect, useState, type ReactNode } from "react";
-import { RoomState, RoomSettings } from "../../../../packages/shared";
+import { useState, type ReactNode } from "react";
+import { RoomState, RoomSettings, Difficulty, OFFER_SHAPES } from "../../../../packages/shared";
 import Avatar, { EmptySeat } from "./Avatar";
-import { Card, Eyebrow, InkEyebrow, Btn, Ghost, LeaveGhost, Seg, PickTag, CodeChip } from "./ui/Bits";
+import { Card, Eyebrow, InkEyebrow, Btn, Ghost, LeaveGhost, Seg, CodeChip } from "./ui/Bits";
 
 type LobbyProps = {
     room: RoomState;
     isHost: boolean;
-    wordLists: Record<string, string[]>;  // available lists per language, from the server
+    languages: string[];   // the tongues there are words for, from the server
     onLeave: () => void;
     onStart: () => void;
     onUpdateSettings: (settings: RoomSettings) => void;
@@ -19,8 +19,6 @@ type LobbyProps = {
 const LANG_LABEL: Record<string, string> = { en: "English", he: "עברית" };
 const ROUND_CHOICES = [3, 5, 8];
 const CANDLE_CHOICES = [30, 60, 90];
-// the lists that are difficulty tiers rather than subjects, in reading order
-const TIERS = ["easy", "medium", "hard"];
 
 const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
 
@@ -30,48 +28,22 @@ const SEAT = { maxWidth: "min(100%, 15vh)" } as const;
 const INK_NOTE = { fontWeight: 600, fontSize: 11.5, lineHeight: 1.45, color: "rgba(58,47,38,.5)" } as const;
 
 /** 05 · The waiting room. */
-export default function Lobby({ room, isHost, wordLists, onLeave, onStart, onUpdateSettings, onOpenHistory, emphasizeCode = false }: LobbyProps) {
+export default function Lobby({ room, isHost, languages, onLeave, onStart, onUpdateSettings, onOpenHistory, emphasizeCode = false }: LobbyProps) {
     const s = room.settings;
     const set = (patch: Partial<RoomSettings>) => onUpdateSettings({ ...s, ...patch });
     const [moreOpen, setMoreOpen] = useState(false);
     const [copied, setCopied] = useState(false);
-    const [lastBook, setLastBook] = useState(false);   // tried to close the only open grimoire
-
-    useEffect(() => {
-        if (!lastBook) return;
-        const id = setTimeout(() => setLastBook(false), 2600);
-        return () => clearTimeout(id);
-    }, [lastBook]);
 
     const drawSec = Math.round(s.drawTimeMs / 1000);
     const seats = Math.min(s.maxPlayers, 12);
     const emptySlots = Math.max(0, seats - room.players.length);
     const host = room.players.find((p) => p.isHost);
     const canStart = room.players.length >= 2;
-    const langs = Object.keys(wordLists).length ? Object.keys(wordLists) : [s.language];
-
-    // ── the grimoires: any number open; [] on the wire means every one ──────
-    const books = wordLists[s.language] ?? [];
-    const onlyOwn = s.customWordsOnly && s.customWords.length > 0;
-    const isOpen = (book: string) => !onlyOwn && (s.lists.length === 0 || s.lists.includes(book));
-    const openCount = books.filter(isOpen).length;
-    const allOpen = openCount === books.length;
-    const shelves = [
-        { label: "by difficulty", books: TIERS.filter((b) => books.includes(b)) },
-        { label: "by subject", books: books.filter((b) => !TIERS.includes(b)).sort() },
-    ].filter((shelf) => shelf.books.length > 0);
+    const langs = languages.length ? languages : [s.language];
 
     const own = s.customWords.length;
+    const onlyOwn = s.customWordsOnly && own > 0;
     const ownWords = `${isHost ? "your" : "the host's"} own ${own === 1 ? "word" : `${own} words`}`;
-
-    const toggleBook = (book: string) => {
-        // own-words-only has every book shut: opening one brings the grimoires back
-        if (onlyOwn) return set({ customWordsOnly: false, lists: [book] });
-        const open = books.filter(isOpen);
-        const next = open.includes(book) ? open.filter((b) => b !== book) : [...open, book];
-        if (next.length === 0) { setLastBook(true); return; }   // a rite needs something to draw from
-        set({ lists: next.length === books.length ? [] : next });
-    };
 
     const copy = async (text: string) => {
         try {
@@ -197,8 +169,7 @@ export default function Lobby({ room, isHost, wordLists, onLeave, onStart, onUpd
                             {isHost ? (
                                 <div className="flex gap-[7px] flex-wrap">
                                     {langs.map((lang) => (
-                                        // a new tongue has its own books: start with all of them open
-                                        <Seg key={lang} active={s.language === lang} onClick={() => set({ language: lang, lists: [] })}>
+                                        <Seg key={lang} active={s.language === lang} onClick={() => set({ language: lang })}>
                                             <span dir="auto" style={{ padding: "0 4px" }}>{LANG_LABEL[lang] ?? lang}</span>
                                         </Seg>
                                     ))}
@@ -209,50 +180,12 @@ export default function Lobby({ room, isHost, wordLists, onLeave, onStart, onUpd
                         </Setting>
                     </div>
 
-                    {/* the grimoires the caster's spells are drawn from — pick any number */}
-                    <div style={{ marginTop: 18 }}>
-                        <div className="flex items-baseline gap-2 flex-wrap" style={{ marginBottom: 9 }}>
-                            <SettingLabel>Grimoires</SettingLabel>
-                            <span style={{ fontWeight: 700, fontSize: 11.5, color: "rgba(58,47,38,.45)" }}>
-                                {onlyOwn ? "all shut" : allOpen ? "every one open" : `${openCount} of ${books.length} open`}
-                            </span>
-                        </div>
-
-                        <div className="flex flex-wrap" style={{ gap: "10px 16px" }}>
-                            {shelves.map((shelf) => (
-                                <div key={shelf.label} className="min-w-0">
-                                    <InkEyebrow dim={0.38} size={9} style={{ letterSpacing: ".16em", marginBottom: 7 }}>{shelf.label}</InkEyebrow>
-                                    <div className="flex flex-wrap gap-2">
-                                        {shelf.books.map((book) => (
-                                            <PickTag key={book} on={isOpen(book)} disabled={!isHost} onClick={() => toggleBook(book)}>{book}</PickTag>
-                                        ))}
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-
-                        <p className="m-0" style={{ ...INK_NOTE, marginTop: 10 }}>
-                            {lastBook ? (
-                                <span style={{ color: "var(--magenta-ink)" }}>one grimoire has to stay open</span>
-                            ) : onlyOwn ? (
-                                <>only {ownWords} {own === 1 ? "is" : "are"} in play{isHost && " — open a book to add its spells back"}</>
-                            ) : (
-                                <>
-                                    {isHost && "tap a book to put its spells in or leave them out"}
-                                    {isHost && own > 0 && " · "}
-                                    {own > 0 && `plus ${ownWords}`}
-                                    {isHost && !allOpen && (
-                                        <>
-                                            {" · "}
-                                            <button type="button" onClick={() => set({ lists: [], customWordsOnly: false })} className="cursor-pointer underline" style={{ background: "transparent", border: 0, padding: 0, font: "inherit", color: "var(--magenta-ink)" }}>
-                                                open them all
-                                            </button>
-                                        </>
-                                    )}
-                                </>
-                            )}
-                        </p>
-                    </div>
+                    {/* what a caster is dealt — one spell of each rank, no longer a menu of books */}
+                    <p className="m-0" style={{ ...INK_NOTE, marginTop: 14 }}>
+                        {onlyOwn
+                            ? <>only {ownWords} {own === 1 ? "is" : "are"} in play</>
+                            : <>each caster is offered {describeOffer(s.wordChoices)}{own > 0 && ` · plus ${ownWords}`}</>}
+                    </p>
 
                     {/* the finer print, unfolded in place rather than hidden in a sheet */}
                     <button
@@ -307,7 +240,7 @@ export default function Lobby({ room, isHost, wordLists, onLeave, onStart, onUpd
                                         }}
                                     />
                                     <p className="m-0 mt-1.5" style={{ fontSize: 10.5, color: "rgba(58,47,38,.45)" }}>
-                                        comma or newline separated · saved when you look away{s.customWordsOnly && s.customWords.length === 0 && " · with none written, the grimoires stand in"}
+                                        comma or newline separated · saved when you look away{s.customWordsOnly && s.customWords.length === 0 && " · with none written, the grimoire stands in"}
                                     </p>
                                 </div>
                             ) : (
@@ -349,6 +282,23 @@ export default function Lobby({ room, isHost, wordLists, onLeave, onStart, onUpd
             </div>
         </div>
     );
+}
+
+const RANK_NAMES: Record<Difficulty, [string, string]> = {
+    easy: ["cantrip", "cantrips"],
+    normal: ["hex", "hexes"],
+    hard: ["forbidden spell", "forbidden spells"],
+};
+
+// "a cantrip, a hex and a forbidden spell" — read off the same OFFER_SHAPES
+// table the server deals from, so the lobby never promises a different hand
+function describeOffer(count: number): string {
+    const shape = OFFER_SHAPES[count] ?? OFFER_SHAPES[3];
+    const parts = (["easy", "normal", "hard"] as const)
+        .map((rank) => [rank, shape.filter((r) => r === rank).length] as const)
+        .filter(([, n]) => n > 0)
+        .map(([rank, n]) => (n === 1 ? `a ${RANK_NAMES[rank][0]}` : `two ${RANK_NAMES[rank][1]}`));
+    return parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}` : parts[0];
 }
 
 function SettingLabel({ children }: { children: ReactNode }) {

@@ -39,7 +39,7 @@ const [authError, setAuthError] = useState<string | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [wordLists, setWordLists] = useState<Record<string, string[]>>({});
+  const [languages, setLanguages] = useState<string[]>([]);   // the tongues there are words for
   const [playerCount, setPlayerCount] = useState<number | null>(null);
   // failed-join state → full-frame RoomNotFound / RoomFull screens
   const [joinFail, setJoinFail] = useState<{ kind: "notfound" | "full"; code: string } | null>(null);
@@ -132,7 +132,8 @@ const [authError, setAuthError] = useState<string | null>(null);
         setMessages((prev) => [...prev, m]);
         if (m.kind === "correct") sfx("correct", m.playerId === playerIdRef.current);
       });
-      socket.on("word_meta", (m: Record<string, string[]>) => setWordLists(m));
+      socket.on("word_meta", (m: unknown) =>
+        setLanguages(Array.isArray(m) ? m.filter((x): x is string => typeof x === "string") : []));
       socket.on("player_count", (n: number) => setPlayerCount(n));
     })();
 
@@ -445,7 +446,7 @@ const [authError, setAuthError] = useState<string | null>(null);
     // lobby / game-over: the screen with the chat sidebar (stacks on mobile)
     const waiting = roomState.status === "waiting";
     const screen = waiting
-      ? <Lobby room={roomState} isHost={isHost} wordLists={wordLists} onLeave={handleLeave} onStart={handleStart} onUpdateSettings={handleUpdateSettings} onOpenHistory={openHistory} emphasizeCode={emphasizeCode} />
+      ? <Lobby room={roomState} isHost={isHost} languages={languages} onLeave={handleLeave} onStart={handleStart} onUpdateSettings={handleUpdateSettings} onOpenHistory={openHistory} emphasizeCode={emphasizeCode} />
       : <GameOver room={roomState} isHost={isHost} onPlayAgain={handlePlayAgain} onLeave={handleLeave} onOpenHistory={openHistory} />;
 
     return (

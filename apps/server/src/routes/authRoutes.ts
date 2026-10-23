@@ -12,9 +12,14 @@ const COOKIE_OPTS = {
     maxAge: 60 * 60 * 24 * 180,
 } as const;
 
+// The old pattern let "[^\s@]+" and "\.[^\s@]+" fight over the same dots, so a
+// long run of them made the check try every split: a 16 KB address took 0.8 s,
+// a 1 MB one would have frozen the whole server for most of an hour. Now the
+// length is capped first (254 is the most an address can be) and the domain is
+// labels without dots joined by dots, which leaves nothing to backtrack over.
+const MAX_EMAIL_LEN = 254;
 function isValidEmail(email: string): boolean {
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    return emailRegex.test(email);
+    return email.length <= MAX_EMAIL_LEN && /^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/.test(email);
 }
 const MIN_PASSWORD_LEN = 10;
 

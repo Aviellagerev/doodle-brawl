@@ -1,9 +1,9 @@
 
 import {
   GameState, GamePhase, RoomState, Player, RoomSettings,
-  WordOption, Difficulty, DIFFICULTY_POINTS, DIFFICULTY_MULTIPLIER,
+  WordOption, Difficulty, DIFFICULTY_POINTS, DIFFICULTY_MULTIPLIER, OFFER_SHAPES,
 } from "../../../../packages/shared/index.js";
-import { WORD_BANK, difficultyForList } from "./words.js";
+import { WORD_BANK } from "./words.js";
 import { foldGuess } from "./guess.js";
 
 
@@ -18,7 +18,6 @@ export const DEFAULT_SETTINGS: RoomSettings = {
   wordChoices: 3,
   maxPlayers: 8,
   language: "en",
-  lists: [],            // [] = all lists for the language
   customWords: [],
   customWordsOnly: false,
   hints: 2,             // reveal up to 2 letters over the drawing time
@@ -49,35 +48,58 @@ function sample<T>(items: T[], count: number): T[] {
   return a.slice(0, n);
 }
 
-export function pickWords(count: number, settings: RoomSettings): WordOption[] {
-  const custom = settings.customWords.map((w) => w.trim()).filter(Boolean);
+// A spell as a guesser would type it — how the bank, the host's words and the
+// spells already drawn are told apart ("Cat" and "cat" are one).
+export const spellKey = (word: string) => foldGuess(word) || word;
 
-  // one option per spell as a guesser would type it (so "Cat" and "cat" are
-  // one), the first occurrence keeping its spelling and difficulty
-  const byKey = new Map<string, WordOption>();
-  const add = (word: string, difficulty: Difficulty) => {
-    const key = foldGuess(word) || word;
-    if (!byKey.has(key)) byKey.set(key, makeOption(word, difficulty));
+const RANKS: Difficulty[] = ["easy", "normal", "hard"];
+
+/**
+ * The caster's offering: one spell per seat of OFFER_SHAPES, easy to hard,
+ * none of them drawn earlier this rite (`drawn` holds spellKeys). The host's
+ * own words take the middle seat half the time while any are left undrawn —
+ * or every seat, with "only these".
+ */
+export function pickWords(count: number, settings: RoomSettings, drawn: ReadonlySet<string> = new Set()): WordOption[] {
+  const shape = OFFER_SHAPES[Math.max(1, Math.min(5, count))];
+  const fresh = (word: string) => !drawn.has(spellKey(word));
+  const own = [...new Map(
+    settings.customWords.map((w) => w.trim()).filter(Boolean).map((w) => [spellKey(w), w] as const),
+  ).values()];
+
+  // "only these" with nothing written would offer nothing — the grimoire stands in
+  if (settings.customWordsOnly && own.length) {
+    const unused = own.filter(fresh);
+    return sample(unused.length ? unused : own, shape.length).map((w) => makeOption(w, "normal"));
+  }
+
+  const bank = WORD_BANK.filter((e) => e.lang === settings.language);
+  const taken = new Set<string>();
+  // a seat's spell: an undrawn one of that rank, or — the rank run dry — any of it
+  const draw = (rank: Difficulty): WordOption | null => {
+    const ofRank = bank.filter((e) => e.difficulty === rank && !taken.has(spellKey(e.word)));
+    const unused = ofRank.filter((e) => fresh(e.word));
+    const [pick] = sample(unused.length ? unused : ofRank, 1);
+    if (!pick) return null;
+    taken.add(spellKey(pick.word));
+    return makeOption(pick.word, rank);
   };
 
-  // "only these" with nothing written would offer nothing — the grimoires stand in
-  if (settings.customWordsOnly && custom.length) {
-    for (const w of custom) add(w, "normal");
-  } else {
-    let bank = WORD_BANK.filter((e) => e.lang === settings.language);
-    if (settings.lists.length) {
-      const narrowed = bank.filter((e) => settings.lists.includes(e.list));
-      if (narrowed.length) bank = narrowed; // don't let a bad filter empty the pool
-    }
-    for (const e of bank) add(e.word, difficultyForList(e.list));
-    for (const w of custom) add(w, "normal");
+  const offer: WordOption[] = [];
+  for (const rank of shape) {
+    // a tongue missing a whole rank lends the seat to another
+    const option = [rank, ...RANKS].reduce<WordOption | null>((got, r) => got ?? draw(r), null);
+    if (option) offer.push(option);
   }
 
-  if (byKey.size === 0) {
-    // last resort — never leave the drawer with nothing to pick
-    return sample(WORD_BANK, count).map((e) => makeOption(e.word, difficultyForList(e.list)));
+  const ownLeft = own.filter((w) => fresh(w) && !taken.has(spellKey(w)));
+  if (offer.length && ownLeft.length && Math.random() < 0.5) {
+    offer[Math.floor(offer.length / 2)] = makeOption(sample(ownLeft, 1)[0], "normal");
   }
-  return sample([...byKey.values()], count);
+  if (offer.length) return offer;
+
+  // last resort — never leave the drawer with nothing to pick
+  return sample(WORD_BANK, shape.length).map((e) => makeOption(e.word, e.difficulty));
 }
 
 // A fresh "choosing" turn for the given drawer.

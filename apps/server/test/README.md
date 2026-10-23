@@ -20,6 +20,9 @@ then
 | `security.test.ts` | what leaks, what a hostile payload does, and whether the doors lock |
 | `proxy-trust.test.ts` | who is allowed to claim a client's IP (pure logic — every local peer is loopback, and loopback is trusted) |
 | `prune.test.ts` | the guest janitor: it deletes rows, so the guards are what is tested |
+| `guess.test.ts` | how a guess is read — accents, apostrophes, Hebrew, one letter off (pure, no stack) |
+| `strokes.test.ts` | what a drawing message must look like before it is passed on (pure, no stack) |
+| `words.test.ts` | the word files and the offering: one rank per spell, easy to hard, no repeats (pure, no stack) |
 
 Notes:
 

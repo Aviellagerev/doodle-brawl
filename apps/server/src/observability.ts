@@ -140,10 +140,27 @@ export function installSocketGuard(socket: Socket, log: FastifyBaseLogger) {
   });
 }
 
+// The live count is a SCAN over every room in Redis. Broadcasts after a join or
+// a leave want it fresh; a socket that has merely arrived can have one from the
+// last few seconds — otherwise opening connections in a loop (no identity
+// needed) makes the server scan Redis in a loop. Overlapping counts share one scan.
+let lastCount: { n: number; at: number } | null = null;
+let counting: Promise<number> | null = null;
+
+function freshCount(roomStore: RoomStore): Promise<number> {
+  counting ??= roomStore.countPlayers()
+    .then((n) => { lastCount = { n, at: Date.now() }; return n; })
+    .finally(() => { counting = null; });
+  return counting;
+}
+
+export function playerCountForArrival(roomStore: RoomStore): Promise<number> {
+  return lastCount && Date.now() - lastCount.at < 10_000 ? Promise.resolve(lastCount.n) : freshCount(roomStore);
+}
+
 export async function broadcastPlayerCount(io: Server, roomStore: RoomStore, log?: FastifyBaseLogger) {
   try {
-    const count = await roomStore.countPlayers();
-    io.emit("player_count", count);
+    io.emit("player_count", await freshCount(roomStore));
   } catch (err) {
     log?.error({ err }, "player count failed");
   }

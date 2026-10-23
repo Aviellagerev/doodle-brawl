@@ -95,7 +95,6 @@ export interface RoomSettings {
   wordChoices: number;     // how many words the drawer picks from
   maxPlayers: number;      // cap on players in the room
   language: string;        // which word files to use ("en" | "he")
-  lists: string[];         // enabled word lists ([] = all lists for the language)
   customWords: string[];   // extra words added by the host
   customWordsOnly: boolean; // draw ONLY from customWords
   hints: number;           // letters gradually revealed to guessers (0 = off)
@@ -139,6 +138,17 @@ export const DIFFICULTY_POINTS: Record<Difficulty, number> = {
   easy: 100,
   normal: 200,
   hard: 300,
+};
+
+// What an offering holds, easy to hard, by how many spells the caster is
+// offered. Three — the default — is a cantrip, a hex and a forbidden spell, so
+// choosing is a gamble between points and risk rather than a lottery.
+export const OFFER_SHAPES: Record<number, Difficulty[]> = {
+  1: ["normal"],
+  2: ["easy", "hard"],
+  3: ["easy", "normal", "hard"],
+  4: ["easy", "normal", "normal", "hard"],
+  5: ["easy", "easy", "normal", "hard", "hard"],
 };
 
 // Multiplier applied to the time-based guess points, keyed by difficulty.
