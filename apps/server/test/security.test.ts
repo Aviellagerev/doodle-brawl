@@ -176,6 +176,71 @@ test("walking in mid-spell does not hand you the spell", async (t) => {
   assert.equal(joined.room!.game!.word, null, "the spell stays hidden from the newcomer");
 });
 
+test("a hostile email cannot stall the server, and big bodies are refused", async () => {
+  await resetRateLimits();
+  const cookie = await guest();
+  const signup = (email: string) => api("/api/signup", {
+    method: "POST", cookie, body: JSON.stringify({ email, password: "correct horse battery", username: "Slow" }),
+  });
+
+  // a run of dots the old email check would retry every split of (0.8 s at
+  // this size; a whole megabyte would have frozen every game for most of an hour)
+  const started = Date.now();
+  const res = await signup("a@" + ".".repeat(15_000) + "@");
+  assert.equal(res.status, 400, "refused as a bad address");
+  assert.ok(Date.now() - started < 500, `answered in ${Date.now() - started} ms`);
+
+  const huge = await signup("a@b.co" + " ".repeat(100_000));
+  assert.equal(huge.status, 413, "a body far past anything the API takes is turned away unread");
+});
+
+test("only a real stroke is passed on — rebuilt, not relayed", async (t) => {
+  const host = await new Client("caster").connect();
+  const guest3 = await new Client("watcher").connect();
+  t.after(() => { host.close(); guest3.close(); });
+  const made = await host.ask("create_room", { name: "Keeper" });
+  await guest3.ask("join_room", { name: "Watcher", code: made.roomId });
+  await host.waitForRoom((r) => r.players.length === 2, "two wizards");
+  host.socket.emit("start_game", made.roomId);
+  const offer = await host.waitForRoom((r) => !!r.game?.wordOptions?.length, "the offering");
+  host.socket.emit("choose_word", { word: offer.game!.wordOptions![0].word });
+  await guest3.waitForRoom((r) => r.game?.phase === "drawing", "drawing");
+
+  const seen: unknown[] = [];
+  guest3.socket.on("draw", (s: unknown) => seen.push(s));
+  const stroke = { from: { x: 0.1, y: 0.1 }, to: { x: 0.2, y: 0.2 }, color: "#2b1c12", width: 6, strokeId: 1 };
+  host.socket.emit("draw", { ...stroke, color: "x".repeat(40_000) });     // a "colour" a megabyte at a time
+  host.socket.emit("draw", { ...stroke, from: { x: "0", y: null } });
+  host.socket.emit("draw", { ...stroke, smuggled: "z".repeat(10_000) });  // honest stroke, extra cargo
+  await wait(500);
+
+  assert.equal(seen.length, 1, "the two broken ones went nowhere");
+  assert.deepEqual(seen[0], { ...stroke, erase: false }, "and the cargo was left behind");
+});
+
+test("a message past the size limit closes the connection", async (t) => {
+  const c = await new Client("bulky").connect();
+  t.after(() => c.close());
+  const closed = new Promise<boolean>((ok) => {
+    c.socket.once("disconnect", () => ok(true));
+    setTimeout(() => ok(false), 3000);
+  });
+  c.socket.emit("send_message", { text: "x".repeat(200_000) });
+  assert.equal(await closed, true, "the server hung up instead of reading 200 KB");
+});
+
+test("leaving a circle you were never in announces nothing", async (t) => {
+  const host = await new Client("host").connect();
+  const stranger = await new Client("stranger").connect();
+  t.after(() => { host.close(); stranger.close(); });
+  const made = await host.ask("create_room", { name: "Keeper" });
+
+  await stranger.ask("leave_room", { roomId: made.roomId });
+  await wait(400);
+  assert.ok(!host.chat.some((m) => /has left the circle/.test(m.text)), "no ghost departures in someone else's circle");
+  assert.equal(host.room!.players.length, 1, "and the circle is as it was");
+});
+
 test("a hostile name or shout is carried as text, never as markup", async (t) => {
   const xss = '<img src=x onerror=alert(1)>';
   const host = await new Client("host").connect();

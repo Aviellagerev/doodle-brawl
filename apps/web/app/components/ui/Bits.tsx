@@ -232,68 +232,6 @@ export function LeaveGhost({ onLeave, confirm = false, className = "", style }: 
   );
 }
 
-/**
- * One tag of a pick-several setting (the grimoires): ticked and filled when it
- * is in, a dashed outline when it is left out. Unlike Seg, any number may be on.
- */
-export function PickTag({ on, onClick, disabled, children }: {
-  on: boolean;
-  onClick?: () => void;
-  disabled?: boolean;
-  children: ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      role="checkbox"
-      aria-checked={on}
-      disabled={disabled}
-      onClick={onClick}
-      className="inline-flex items-center gap-1.5 flex-none"
-      style={{
-        minHeight: 36,
-        padding: "0 9px 0 6px",
-        borderRadius: "12px 10px 13px 11px",
-        fontFamily: "var(--font-loud)",
-        fontWeight: 800,
-        fontSize: 12.5,
-        cursor: disabled ? "default" : "pointer",
-        ...(on
-          ? {
-              border: "2.5px solid var(--ink-warm)",
-              background: "var(--teal)",
-              color: "var(--ink-warm)",
-              boxShadow: "2px 2px 0 var(--ink-warm)",
-            }
-          : {
-              border: "2px dashed rgba(58,47,38,.35)",
-              background: "transparent",
-              color: "rgba(58,47,38,.5)",
-            }),
-      }}
-    >
-      <span
-        aria-hidden
-        className="grid place-items-center flex-none"
-        style={{
-          width: 15,
-          height: 15,
-          borderRadius: 5,
-          fontSize: 11,
-          lineHeight: 1,
-          fontWeight: 900,
-          ...(on
-            ? { border: "2px solid var(--ink-warm)", background: "var(--parchment-bright)", color: "var(--ink-warm)" }
-            : { border: "2px solid rgba(58,47,38,.28)" }),
-        }}
-      >
-        {on ? "✓" : ""}
-      </span>
-      {children}
-    </button>
-  );
-}
-
 /** One cell of a segmented setting (rounds / candle). */
 export function Seg({
   active,

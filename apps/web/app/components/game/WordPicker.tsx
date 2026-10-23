@@ -81,9 +81,13 @@ export default function WordPicker({ words, rerollsLeft, onReroll, onChoose, end
             {/* desktop: a row of tilted cards · mobile: full-width stacked rows */}
             <div className="w-full flex flex-col lg:flex-row gap-3.5 lg:gap-[26px] items-stretch justify-center">
                 {words.map((opt, i) => {
-                    const s = SPOTS[i % SPOTS.length];
+                    // the offering runs easy to hard, so the middle card is the hex:
+                    // the one the design recommends, lifts and has the grimoire
+                    // auto-pick when the candle runs out
+                    const mid = Math.floor(words.length / 2);
+                    const recommended = words.length >= 3 && i === mid;
+                    const s = recommended ? SPOTS[1] : i < mid ? SPOTS[0] : SPOTS[2];
                     const r = RANK[opt.difficulty];
-                    const recommended = i === 1;
                     return (
                         <button
                             key={opt.word + i}

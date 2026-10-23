@@ -4,15 +4,16 @@ import { DrawSegment, DrawOp, DrawEntry, ChatMessage, ChatEntry, MAX_CHAT_LEN, M
 import { RoomState, Player, RoomSettings, GameState, RoomResponse, CHOOSE_TIME_MS, SCORING_DELAY_MS } from "../../../../packages/shared/index.js";
 import { createNewRoom, createNewPlayer } from "./../services/roomServices.js";
 import {
-    chooseWord, createInitialGame, pickWords, viewFor,
+    chooseWord, createInitialGame, pickWords, viewFor, spellKey,
     toScoring, guessPoints, drawerBonus, allGuessed, advanceTurn, revealHintLetter,
     scaleByDifficulty,
 } from "../game/skribbl.js";
 import { judgeGuess, revealsWord, foldGuess } from "../game/guess.js";
-import { startMatch, startTurn, logGuess, logChat, closeTurn, takeMatch, forgetMatch } from "../matchLog.js";
+import { startMatch, startTurn, logGuess, logChat, closeTurn, takeMatch, forgetMatch, drawnWords } from "../matchLog.js";
 import { renamePlayer } from "../stores/playerStore.js";
-import { WORD_LISTS, tidyWord } from "../game/words.js";
+import { LANGUAGES, tidyWord } from "../game/words.js";
 import { broadcastPlayerCount } from "../observability.js";
+import { cleanSegment, cleanOp } from "../game/strokes.js";
 import { saveMatch } from "../stores/matchStore.js";
 
 const TIMEOUT_TIMER = 60_000;
@@ -212,7 +213,7 @@ async function advanceRound(io: Server, roomStore: RoomStore, roomId: string) {
 
 async function offerWords(io: Server, roomStore: RoomStore, room: RoomState) {
     if (!room.game) return;
-    room.game.wordOptions = pickWords(room.settings.wordChoices, room.settings);
+    room.game.wordOptions = pickWords(room.settings.wordChoices, room.settings, drawnWords(room.roomId));
     room.game.endsAt = Date.now() + CHOOSE_TIME_MS;
     await roomStore.saveRoom(room);
     broadcastRoom(io, room);
@@ -225,8 +226,8 @@ async function autoPickWord(io: Server, roomStore: RoomStore, roomId: string) {
     clearRoundTimer(roomId);
     const room = await roomStore.getRoom(roomId);
     if (!room || !room.game || room.game.phase !== "choosing") return;
-    const opts = room.game.wordOptions ?? pickWords(room.settings.wordChoices, room.settings);
-    const word = opts[0].word;
+    const opts = room.game.wordOptions ?? pickWords(room.settings.wordChoices, room.settings, drawnWords(roomId));
+    const word = opts[Math.floor(opts.length / 2)].word;   // the middle card, as the design has it
     await commitWord(io, roomStore, roomId, word);
 }
 
@@ -255,16 +256,6 @@ async function commitWord(io: Server, roomStore: RoomStore, roomId: string, word
 function clamp(v: unknown, min: number, max: number, fallback: number): number {
     const n = typeof v === "number" && Number.isFinite(v) ? v : fallback;
     return Math.max(min, Math.min(max, Math.round(n)));
-}
-
-// Which grimoires are open: only books this tongue actually has. Every book
-// open is written [] ("no filter") — and so is none, since a rite with nothing
-// to draw from falls back to all of them anyway.
-function cleanLists(v: unknown, language: string, fallback: string[]): string[] {
-    const known = WORD_LISTS[language] ?? [];
-    const asked = Array.isArray(v) ? v : fallback;
-    const open = [...new Set(asked.filter((x): x is string => typeof x === "string" && known.includes(x)))];
-    return open.length === known.length ? [] : open;
 }
 
 const MAX_CUSTOM_WORDS = 500;
@@ -350,10 +341,8 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
             return roomId ? withRoom(roomId, () => handler(...args)) : handler(...args);
         });
 
-    // tell the client which word lists exist per language (drives the lobby picker)
-    socket.emit("word_meta", WORD_LISTS);
-    // seed the newcomer with the current live player count (for the join screen)
-    roomStore.countPlayers().then((n) => socket.emit("player_count", n)).catch(() => { });
+    // tell the client which tongues there are words for (the lobby's Tongue setting)
+    socket.emit("word_meta", LANGUAGES);
 
     socket.on("create_room", async (data, callback) => {
         const reply = ack<RoomResponse>(callback);
@@ -371,7 +360,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
             socketId: socket.id,
             name,
             isHost: true,
-            avatar: cleanAvatar(data.avatar),
+            avatar: cleanAvatar(data?.avatar),
         });
 
         const newRoom: RoomState = createNewRoom(hostPlayer);
@@ -413,7 +402,7 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
             socketId: socket.id,
             name,
             isHost: false,
-            avatar: cleanAvatar(data.avatar),
+            avatar: cleanAvatar(data?.avatar),
         })
         const timer = disconectTimers.get(socket.data.playerId);
         if (timer) { clearTimeout(timer); disconectTimers.delete(socket.data.playerId); }
@@ -472,6 +461,10 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
             await withRoom(roomId, async () => {
                 const { room, removed } = await roomStore.leavePlayer(roomId, socket.data.playerId);
                 socket.leave(roomId);
+                if (socket.data.roomId === roomId) socket.data.roomId = undefined;
+                // a code you were never in: nothing to leave, and nothing to announce
+                // (this used to post "a wizard has left" into any circle by its code)
+                if (!removed) return;
                 if (room) {
                     broadcastRoom(io, room);
                     say(io, room.roomId, { author: "System", text: `${removed?.name ?? "A wizard"} has left the circle`, kind: "system", playerId: removed?.id }, room.game);
@@ -574,7 +567,10 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
             if (socket.data.playerId !== room.game.currentDrawerId) return; // drawer only
             if (room.game.phase !== "choosing") return;                     // choosing only
             if (room.game.rerollsLeft <= 0) return;                         // out of rerolls
-            room.game.wordOptions = pickWords(room.settings.wordChoices, room.settings);
+            // fresh ones: nothing drawn this rite, and none of the cards just refused
+            const skip = drawnWords(roomId);
+            for (const o of room.game.wordOptions ?? []) skip.add(spellKey(o.word));
+            room.game.wordOptions = pickWords(room.settings.wordChoices, room.settings, skip);
             room.game.rerollsLeft -= 1;
             await roomStore.saveRoom(room);
             broadcastRoom(io, room);   // drawer sees new options; others still redacted
@@ -583,9 +579,11 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
         }
     })
 
-    socket.on("draw", async (segment: DrawSegment) => {
+    socket.on("draw", async (raw: unknown) => {
         const roomId = socket.data.roomId;
         if (!roomId) return;
+        const segment = cleanSegment(raw);   // only ever pass on what was rebuilt
+        if (!segment) return;
 
         const room = await roomStore.getRoom(roomId);
         if (!room || !room.game) return;
@@ -598,9 +596,11 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
         recordSeg(roomId, { ...segment, t: stampT(room.game) });   // keep the turn's canvas for late joiners
     });
     // shape/fill tool ops (line/rect/ellipse/fill) — relayed exactly like "draw"
-    socket.on("draw_op", async (op: DrawOp) => {
+    socket.on("draw_op", async (raw: unknown) => {
         const roomId = socket.data.roomId;
         if (!roomId) return;
+        const op = cleanOp(raw);
+        if (!op) return;
         const room = await roomStore.getRoom(roomId);
         if (!room || !room.game) return;
         if (socket.data.playerId !== room.game.currentDrawerId) return; // drawer only
@@ -743,14 +743,13 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
 
         const prev = room.settings;
         const s = (data ?? {}) as Partial<RoomSettings>;
-        const language = typeof s.language === "string" && WORD_LISTS[s.language] ? s.language : room.settings.language;
+        const language = typeof s.language === "string" && LANGUAGES.includes(s.language) ? s.language : room.settings.language;
         room.settings = {
             rounds: clamp(s.rounds, 1, 10, room.settings.rounds),
             drawTimeMs: clamp(s.drawTimeMs, 15_000, 300_000, room.settings.drawTimeMs),
             wordChoices: clamp(s.wordChoices, 1, 5, room.settings.wordChoices),
             maxPlayers: clamp(s.maxPlayers, 2, 20, room.settings.maxPlayers),
             language,
-            lists: cleanLists(s.lists, language, room.settings.lists),
             customWords: Array.isArray(s.customWords) ? cleanCustomWords(s.customWords) : room.settings.customWords,
             customWordsOnly: typeof s.customWordsOnly === "boolean" ? s.customWordsOnly : room.settings.customWordsOnly,
             hints: clamp(s.hints, 0, 5, room.settings.hints),
@@ -767,11 +766,8 @@ export function registerRoomHandlers(io: Server, socket: Socket, roomStore: Room
         if (now.hints !== prev.hints) changes.push(now.hints === 0 ? "the hints out" : `the hints to ${now.hints}`);
         if (now.wordChoices !== prev.wordChoices) changes.push(`the offering to ${now.wordChoices} ${now.wordChoices === 1 ? "spell" : "spells"}`);
         if (now.language !== prev.language) changes.push(`the tongue to ${TONGUES[now.language] ?? now.language}`);
-        if ([...now.lists].sort().join() !== [...prev.lists].sort().join()) {
-            changes.push(now.lists.length ? `the grimoires to ${now.lists.join(" + ")}` : "every grimoire open");
-        }
         if (now.customWordsOnly !== prev.customWordsOnly) {
-            changes.push(now.customWordsOnly ? "the spells to their own words only" : "the grimoires back into play");
+            changes.push(now.customWordsOnly ? "the spells to their own words only" : "the grimoire back into play");
         }
         if (changes.length) {
             say(io, roomId, { author: "System", text: `⚙ ${host.name} set ${changes.join(", ")}`, kind: "system", playerId: host.id }, room.game);

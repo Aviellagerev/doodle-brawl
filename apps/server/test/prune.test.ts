@@ -63,3 +63,26 @@ test("a guest who played is kept, however old", async (t) => {
   await pruneIdleGuests(30);
   assert.equal(await exists(played), true, "history is what makes a guest worth keeping");
 });
+
+test("a guest who left mid-rite is kept, and the sweep still runs", async (t) => {
+  // drew a turn and left before the end: in match_turns, not in the standings.
+  // This used to make the whole sweep fail on the foreign key.
+  const match = await pool.query("SELECT match_id FROM matches ORDER BY ended_at DESC LIMIT 1");
+  if (match.rowCount === 0) return t.skip("no match in the database to attach to");
+
+  const drewAndLeft = await insertPlayer(400);
+  const idle = await insertPlayer(400);
+  const turn = await pool.query(
+    `INSERT INTO match_turns (match_id, round, turn_index, drawer_id, word, difficulty)
+     VALUES ($1, 99, 99, $2, 'kettle', 'normal') RETURNING turn_id`,
+    [match.rows[0].match_id, drewAndLeft],
+  );
+  t.after(async () => {
+    await pool.query("DELETE FROM match_turns WHERE turn_id = $1", [turn.rows[0].turn_id]);
+    await pool.query("DELETE FROM players WHERE id = ANY($1)", [[drewAndLeft, idle]]);
+  });
+
+  await pruneIdleGuests(30);   // must not throw
+  assert.equal(await exists(drewAndLeft), true, "a turn drawn is history too");
+  assert.equal(await exists(idle), false, "and the idle guest beside them was still swept");
+});

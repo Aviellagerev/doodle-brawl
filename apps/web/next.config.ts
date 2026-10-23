@@ -13,6 +13,13 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: path.join(__dirname, "..", ".."),
   },
+  // The app draws its images with plain <img> tags and never uses next/image,
+  // yet the optimizer behind /_next/image is on by default and answers anyone
+  // on the internet. It has carried several remote-code-execution advisories;
+  // switched off, that whole door is gone and images are served as they are.
+  images: {
+    unoptimized: true,
+  },
 };
 
 export default nextConfig;

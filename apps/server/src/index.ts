@@ -10,11 +10,13 @@ import { historyRoutes } from "./routes/historyRoutes.js";
 import cors from "@fastify/cors";
 import cookie from "@fastify/cookie";
 import rateLimit from "@fastify/rate-limit";
-import { installSocketGuard, broadcastPlayerCount, ipFromHeaders } from "./observability.js";
+import { installSocketGuard, broadcastPlayerCount, playerCountForArrival, ipFromHeaders } from "./observability.js";
 import { verifySession, deleteExpiredSessions } from "./stores/sessionStore.js";
 import { pruneIdleGuests } from "./stores/playerStore.js";
 const roomStore = new RoomStore(redis);
-const app = Fastify({ logger: true });
+// Every body this API accepts is a few hundred bytes (a signup is the biggest).
+// The default 1 MB only gave a stranger room to make the server work.
+const app = Fastify({ logger: true, bodyLimit: 16 * 1024 });
 app.get("/health", async () => ({ ok: true }));
 const start = async () => {
     const r = await pool.query("SELECT now()");
@@ -51,8 +53,18 @@ const start = async () => {
     // action, not every player their game — the alternative is that a single
     // malformed message ends every rite in progress.
     process.on("unhandledRejection", (reason) => app.log.error({ reason }, "unhandled rejection"));
-    process.on("uncaughtException", (err) => app.log.error({ err }, "uncaught exception"));
+    // A synchronous throw that nothing caught leaves the process in a state
+    // nobody planned for, and carrying on is how a crash becomes a hole. Die,
+    // and let the container restart us: rooms live in Redis and their clocks
+    // are re-armed on boot.
+    process.on("uncaughtException", (err) => {
+        app.log.fatal({ err }, "uncaught exception");
+        process.exit(1);
+    });
     const io = new Server(app.server, {
+        // the biggest honest message is a host's own-words list (500 words of up
+        // to 32 letters); Socket.IO's default 1 MB per message only helped abuse
+        maxHttpBufferSize: 64 * 1024,
         cors: {
             origin: config.corsOrigin === "*" ? true : config.corsOrigin,
             credentials: true,
@@ -87,7 +99,7 @@ const start = async () => {
         // tell this socket the count straight away — otherwise a new arrival
         // waits up to 30s for the next sweep before the join screen can say
         // how many wizards are awake
-        roomStore.countPlayers()
+        playerCountForArrival(roomStore)
             .then((n) => socket.emit("player_count", n))
             .catch((err) => app.log.error({ err }, "player count on connect failed"));
     });

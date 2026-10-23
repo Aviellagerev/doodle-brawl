@@ -1,6 +1,6 @@
 import test, { before } from "node:test";
 import assert from "node:assert/strict";
-import { Client, wait , resetRateLimits} from "./helpers.js";
+import { Client, wait, resetRateLimits, playToFinish } from "./helpers.js";
 import { CHOOSE_TIME_MS } from "../../../packages/shared/index.js";
 import { hintForm } from "../src/game/skribbl.js";
 
@@ -318,20 +318,44 @@ test("a diviner sees the spell, and may not say it", async (t) => {
   assert.ok(second.chat.some((m) => m.text === "well drawn"), "ordinary chat still carries");
 });
 
-test("grimoires are checked against the books that exist", async (t) => {
+test("the caster is offered a cantrip, a hex and a forbidden spell", async (t) => {
   const host = await new Client("host").connect();
-  t.after(() => host.close());
+  const guest = await new Client("guest").connect();
+  t.after(() => { host.close(); guest.close(); });
+
   const made = await host.ask("create_room", { name: "Gorbo" });
-  const books = host.wordMeta[made.room!.settings.language] ?? [];
-  assert.ok(books.length > 1, "the server named its grimoires");
+  assert.deepEqual(host.languages, ["en", "he"], "the tongues arrive with the socket");
+  await guest.ask("join_room", { name: "Miffwick", code: made.roomId });
+  await host.waitForRoom((r) => r.players.length === 2, "two wizards");
 
-  host.socket.emit("update_settings", { ...made.room!.settings, lists: [books[0], "no-such-book", 42] });
-  const narrowed = await host.waitForRoom((r) => r.settings.lists.length > 0, "the narrowed shelf");
-  assert.deepEqual(narrowed.settings.lists, [books[0]], "only real books survive");
+  host.socket.emit("start_game", made.roomId);
+  const offer = await host.waitForRoom((r) => !!r.game?.wordOptions?.length, "the offering");
+  assert.deepEqual(offer.game!.wordOptions!.map((o) => o.difficulty), ["easy", "normal", "hard"]);
+  assert.deepEqual(offer.game!.wordOptions!.map((o) => o.points), [100, 200, 300]);
+});
 
-  host.socket.emit("update_settings", { ...narrowed.settings, lists: [...books] });
-  const all = await host.waitForRoom((r) => r.settings.lists.length === 0, "every book open");
-  assert.deepEqual(all.settings.lists, [], "every book open is written as no filter");
+test("no spell is drawn twice in one rite", async (t) => {
+  // four words, four turns, one card each: without the rite remembering what
+  // was drawn, a repeat is all but certain
+  const words = ["toad", "kettle", "broom", "cauldron"];
+  const host = await new Client("host").connect();
+  const guest = await new Client("guest").connect();
+  t.after(() => { host.close(); guest.close(); });
+
+  const made = await host.ask("create_room", { name: "Gorbo" });
+  host.socket.emit("update_settings", {
+    ...made.room!.settings, rounds: 2, drawTimeMs: 15_000, wordChoices: 1, customWords: words, customWordsOnly: true,
+  });
+  await host.waitForRoom((r) => r.settings.customWordsOnly && r.settings.rounds === 2, "own words only");
+  await guest.ask("join_room", { name: "Miffwick", code: made.roomId });
+  await host.waitForRoom((r) => r.players.length === 2, "two wizards");
+
+  host.socket.emit("start_game", made.roomId);
+  const end = await playToFinish([host, guest], 90_000);
+  assert.equal(end.status, "finished");
+
+  const drawn = new Set(host.rooms.filter((r) => r.game?.phase === "scoring").map((r) => r.game!.word));
+  assert.deepEqual([...drawn].sort(), [...words].sort(), "each of the four, once");
 });
 
 test("wizards guessing in the same instant are all counted", async (t) => {

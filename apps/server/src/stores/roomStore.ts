@@ -40,6 +40,7 @@ export class RoomStore {
     if (!room) return { room: null, removed: null };
 
     const removed = room.players.find((p) => p.id === playerId) ?? null;
+    if (!removed) return { room, removed: null };   // not in it: leave the room as it was
     room.players = room.players.filter((p) => p.id !== playerId);
 
     if (room.players.length === 0) {

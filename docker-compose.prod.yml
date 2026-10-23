@@ -6,11 +6,15 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 256m
     # internal only — reachable by `server` via the compose network as host "redis"
 
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 512m
     environment:
       POSTGRES_USER: skribbl
       POSTGRES_PASSWORD: ${PGPASSWORD:?set PGPASSWORD in .env}
@@ -53,6 +57,16 @@ services:
       - ./apps/server/words:/app/apps/server/words:ro
     ports:
       - "${WG_IP:-10.0.0.2}:3001:3001"   # WireGuard interface only
+    # Locked down. If anything ever got code running in here it would find a
+    # read-only filesystem, no Linux capabilities and no way to gain any, and a
+    # memory ceiling that stops it starving everything else on jon-pc.
+    read_only: true
+    tmpfs:
+      - /tmp                                # tsx's compile cache
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 512m
+    pids_limit: 256
 
   web:
     build:
@@ -64,6 +78,15 @@ services:
     restart: unless-stopped
     ports:
       - "${WG_IP:-10.0.0.2}:3000:3000"   # WireGuard interface only
+    # locked down the same way as the server
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /app/apps/web/.next/cache:uid=1000,gid=1000   # the one place next start writes
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 512m
+    pids_limit: 256
 
 volumes:
   pgdata:
